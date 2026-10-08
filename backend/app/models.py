@@ -112,6 +112,7 @@ class Sale(Base):
     payment_status: Mapped[str] = mapped_column(String(20), default="RECIBIDO")
     subtotal_cents: Mapped[int] = mapped_column(Integer)
     customer_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(100))
     received_confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

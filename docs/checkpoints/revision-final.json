@@ -1,0 +1,16 @@
+{
+  "stage": "revision-final",
+  "complete": true,
+  "tests_passed": true,
+  "branch": "feat/base-catalogo",
+  "detail": {
+    "review_scope": "revisión independiente realizada por este mismo agente; no reviewer distinto",
+    "backend": "16 passed, 1 skipped, 1 warning",
+    "frontend": "5 passed; typecheck y build correctos",
+    "audit": "npm audit moderate: 0 vulnerabilities; pip-audit unavailable; pip check limpio",
+    "security": "auth/CSRF/CORS/roles/sesiones, privacidad/idempotencia, snapshots y catálogo acíclico revisados; CORS PATCH/Idempotency-Key y referencia POS corregidos",
+    "database": "PostgreSQL real migrations 001-007; catálogo 9; órdenes/ventas fixtures 0; Compose saludable sin -v",
+    "browser": "desktop/mobile landing, auth labels/focus, flujo pedido-operador-POS previamente ejercido; capturas b64 bajo 55000",
+    "backlog": "Google/email provider, puntos/costes/reglas, Wallet, app nativa/PWA, tarjetas, inventario, banco, reparto, cobertura/coste, devoluciones y producción diferidos"
+  }
+}

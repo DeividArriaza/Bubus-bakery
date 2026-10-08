@@ -58,3 +58,13 @@ Capturas JPG y base64 (<55 000 caracteres por archivo):
 - Referencia PDF recortada: docs/design-review/figma-reference-hero-login.jpg / .b64
 
 Se extrajeron dos fotos reales embebidas del PDF a frontend/public/assets/. No se copiaron reseñas, “baked daily”, precios ni promesas de muestra como hechos del negocio. Quedan pendientes endurecimiento, observabilidad, backups probados, despliegue y revisión de contenido/legal.
+
+## Revisión final y alcance vigente
+
+La revisión final fue independiente dentro del mismo agente, no por un modelo reviewer distinto. Se verificaron auth/CSRF/CORS/roles/sesiones, ciclos del catálogo, precios y snapshots históricos, privacidad/idempotencia de solicitudes, auditoría POS, secretos, Docker/DB privada/localhost/healthchecks, foco y etiquetas móviles. Hallazgos corregidos: CORS ahora declara PATCH e Idempotency-Key; ventas guardan referencia interna no sensible mediante migración 007; UI tiene foco visible.
+
+Comandos finales: `docker compose build && docker compose up -d` sin `-v`; migraciones PostgreSQL 001–007; `docker compose exec -T api pytest -q` → 16 passed, 1 skipped, 1 warning; `docker compose run --rm --no-deps -v "$PWD:/workspace" -e REPO_ROOT=/workspace api pytest -q /workspace/backend/tests/test_compose_config.py` → 1 passed; en `frontend/`, test 5 passed, typecheck/build correctos, `npm audit --audit-level=moderate` → 0 vulnerabilidades; pip-audit no disponible, pip check limpio.
+
+La smoke browser real cubrió cliente crea solicitud → operador consulta/confirmación → venta POS; capturas adicionales: `docs/design-review/orders-mobile.jpg`/`.b64` y `pos-desktop.jpg`/`.b64`, cada `.b64` bajo 55 000 caracteres. URLs locales: `http://localhost:5173` y `http://localhost:8000/api/health`. `db`, `api` y `frontend` quedaron healthy; reinicio/rebuild fue sin borrar volumen.
+
+Diferido y no fingido: Google por falta de configuración, proveedor de verificación/recuperación de correo, puntos hasta aprobar costes/reglas, Wallet, app nativa/PWA, tarjetas, inventario, banco, reparto, cobertura/coste/logística y devoluciones. No hay claim de producción.

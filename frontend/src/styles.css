@@ -1,5 +1,6 @@
 :root { font-family: "DM Sans", Arial, sans-serif; color: #4c2030; background: #fffaf8; font-synthesis: none; --wine:#a72e5a; --ink:#4c2030; --pink:#f9e9e9; --cream:#fffaf8; --line:#ead4d6; }
 * { box-sizing: border-box; }
+:focus-visible { outline: 3px solid #ef6f92; outline-offset: 3px; }
 html { scroll-behavior: smooth; }
 body { margin: 0; min-width: 320px; }
 a { color: inherit; text-decoration: none; }

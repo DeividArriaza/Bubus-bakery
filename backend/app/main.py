@@ -37,7 +37,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
 
     app = FastAPI(title="Bubu's bakery API", version="0.1.0", lifespan=lifespan)
     origins = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if origin.strip()]
-    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
+    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type", "Idempotency-Key"])
 
     secure_cookie = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
 
@@ -208,6 +208,9 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         customer_name = payload.get("customerName")
         if customer_name is not None and (not isinstance(customer_name, str) or len(customer_name.strip()) > 120):
             raise HTTPException(status_code=422, detail="El nombre del cliente es demasiado largo.")
+        reference = payload.get("reference")
+        if reference is not None and (not isinstance(reference, str) or len(reference.strip()) > 120):
+            raise HTTPException(status_code=422, detail="La referencia es demasiado larga.")
         with session_factory() as session:
             existing = session.scalar(select(Sale).where(Sale.actor_id == actor.id, Sale.idempotency_key == key))
             if existing is not None:
@@ -223,7 +226,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                 member = session.scalar(select(User).where(User.email == normalized, User.active.is_(True)))
                 customer_id = member.id if member is not None else None
             timestamp = now_utc()
-            sale = Sale(actor_id=actor.id, customer_id=customer_id, payment_method=method.upper(), payment_status="RECIBIDO", subtotal_cents=subtotal, customer_name=customer_name.strip() if isinstance(customer_name, str) else None, idempotency_key=key, received_confirmed_at=timestamp, created_at=timestamp)
+            sale = Sale(actor_id=actor.id, customer_id=customer_id, payment_method=method.upper(), payment_status="RECIBIDO", subtotal_cents=subtotal, customer_name=customer_name.strip() if isinstance(customer_name, str) else None, reference=reference.strip() if isinstance(reference, str) else None, idempotency_key=key, received_confirmed_at=timestamp, created_at=timestamp)
             session.add(sale)
             session.flush()
             for item in snapshots:

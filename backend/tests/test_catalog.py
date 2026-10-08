@@ -75,3 +75,19 @@ def test_catalog_database_error_is_spanish():
     response = TestClient(create_app(broken_session)).get("/api/catalog")
     assert response.status_code == 503
     assert response.json() == {"error": "No pudimos cargar el catálogo en este momento."}
+
+
+def test_active_catalog_compositions_are_acyclic_and_prices_are_product_owned():
+    session_factory, engine = create_test_session()
+    init_test_database(engine)
+    seed_catalog(session_factory)
+    with session_factory() as session:
+        products = {product.id: product for product in session.scalars(select(Product).where(Product.active.is_(True)))}
+        graph = {product_id: [component.child_id for component in session.scalars(select(Component).where(Component.parent_id == product_id))] for product_id in products}
+        def visit(node, path):
+            assert node not in path, "el catálogo no puede contener ciclos de composición"
+            for child in graph.get(node, []):
+                visit(child, path | {node})
+        for product_id in products:
+            visit(product_id, set())
+        assert all(product.price_cents >= 0 for product in products.values())

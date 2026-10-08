@@ -78,4 +78,4 @@ def order_json(session: Session, order: Order) -> dict:
 
 def sale_json(session: Session, sale: Sale) -> dict:
     items = list(session.scalars(select(SaleItem).where(SaleItem.sale_id == sale.id).order_by(SaleItem.id)))
-    return {"id": sale.id, "paymentMethod": sale.payment_method, "paymentStatus": sale.payment_status, "subtotalCents": sale.subtotal_cents, "customerName": sale.customer_name, "createdAt": sale.created_at.isoformat(), "items": [{"slug": item.product_slug, "name": item.product_name, "unitPriceCents": item.unit_price_cents, "quantity": item.quantity, **json.loads(item.snapshot_json)} for item in items]}
+    return {"id": sale.id, "paymentMethod": sale.payment_method, "paymentStatus": sale.payment_status, "subtotalCents": sale.subtotal_cents, "customerName": sale.customer_name, "reference": sale.reference, "createdAt": sale.created_at.isoformat(), "items": [{"slug": item.product_slug, "name": item.product_name, "unitPriceCents": item.unit_price_cents, "quantity": item.quantity, **json.loads(item.snapshot_json)} for item in items]}

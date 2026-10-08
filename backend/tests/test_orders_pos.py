@@ -85,12 +85,12 @@ def test_operator_can_register_cash_sale_and_customer_cannot_or_claim_receipt():
     client, factory = setup_clients()
     customer = create_user(factory, "customer@example.com")
     operator = create_user(factory, "operator@example.com", "operator")
-    body = {"customerEmail": "customer@example.com", "items": [{"slug": "simple", "quantity": 2, "priceCents": 999999}], "paymentMethod": "efectivo", "receivedConfirmed": True}
+    body = {"customerEmail": "customer@example.com", "reference": "Ticket interno smoke", "items": [{"slug": "simple", "quantity": 2, "priceCents": 999999}], "paymentMethod": "efectivo", "receivedConfirmed": True}
     denied = client.post("/api/operator/sales", json=body, headers=auth_headers(customer, "sale-customer"))
     assert denied.status_code == 403
     sale = client.post("/api/operator/sales", json=body, headers=auth_headers(operator, "sale-1"))
     assert sale.status_code == 201
-    assert sale.json()["subtotalCents"] == 2000 and sale.json()["paymentMethod"] == "EFECTIVO"
+    assert sale.json()["subtotalCents"] == 2000 and sale.json()["paymentMethod"] == "EFECTIVO" and sale.json()["reference"] == "Ticket interno smoke"
     duplicate = client.post("/api/operator/sales", json=body, headers=auth_headers(operator, "sale-1"))
     assert duplicate.status_code == 200 and duplicate.json()["id"] == sale.json()["id"]
     not_confirmed = client.post("/api/operator/sales", json={**body, "receivedConfirmed": False}, headers=auth_headers(operator, "sale-2"))
@@ -113,3 +113,12 @@ def test_operator_can_view_and_update_order_but_customer_cannot():
     assert visible.status_code == 200 and visible.json()["orders"][0]["id"] == order_id
     changed = client.patch(f"/api/operator/orders/{order_id}", json={"status": "CONFIRMADA"}, headers=auth_headers(operator, "order-status"))
     assert changed.status_code == 200 and changed.json()["status"] == "CONFIRMADA"
+
+
+def test_cors_allows_authenticated_patch_and_idempotency_header_only_from_dev_origin():
+    client, _ = setup_clients()
+    response = client.options("/api/operator/orders/1", headers={"Origin": ORIGIN, "Access-Control-Request-Method": "PATCH", "Access-Control-Request-Headers": "content-type,idempotency-key"})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == ORIGIN
+    assert "PATCH" in response.headers["access-control-allow-methods"]
+    assert "idempotency-key" in response.headers["access-control-allow-headers"].lower()

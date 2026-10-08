@@ -18,6 +18,6 @@ export function listOperatorOrders() { return request<{ orders: OrderRecord[] }>
 
 export function updateOrder(id: number, status: string) { return request<OrderRecord>(`/api/operator/orders/${id}`, { method: "PATCH", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ status }) }); }
 
-export function createSale(items: OrderLine[], paymentMethod: "efectivo" | "transferencia", customerName: string, customerEmail: string, receivedConfirmed: boolean) {
-  return request("/api/operator/sales", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ items, paymentMethod, customerName: customerName || undefined, customerEmail: customerEmail || undefined, receivedConfirmed }) });
+export function createSale(items: OrderLine[], paymentMethod: "efectivo" | "transferencia", customerName: string, customerEmail: string, reference: string, receivedConfirmed: boolean) {
+  return request("/api/operator/sales", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ items, paymentMethod, customerName: customerName || undefined, customerEmail: customerEmail || undefined, reference: reference || undefined, receivedConfirmed }) });
 }
