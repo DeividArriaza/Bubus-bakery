@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from .auth import AuthRateLimiter, PASSWORD_MAX_LENGTH, SESSION_COOKIE, create_session, current_user, hash_password, normalize_email, public_user, require_origin, revoke_session, validate_password, verify_password
-from .commerce import calculate_items, now_utc, order_fingerprint_data, order_json, payload_fingerprint, sale_fingerprint_data, sale_json
+from .commerce import calculate_items, historical_order_intention, historical_sale_intention, now_utc, order_intention, order_json, payload_fingerprint, sale_intention, sale_json
 from .db import apply_migrations, catalog_data, make_engine, make_session_factory, seed_catalog
 from .models import Order, OrderItem, Sale, SaleItem, User
 
@@ -57,6 +57,13 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
             content_length = request.headers.get("content-length")
             if content_length and content_length.isdigit() and int(content_length) > auth_max_bytes:
                 return JSONResponse(status_code=413, content={"error": "La solicitud de acceso es demasiado grande."})
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > auth_max_bytes:
+                    return JSONResponse(status_code=413, content={"error": "La solicitud de acceso es demasiado grande."})
+                body.extend(chunk)
+            request._body = bytes(body)
+            return await call_next(request)
         return await call_next(request)
 
     def client_key(request: Request) -> str:
@@ -178,36 +185,36 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="No tienes permisos para esta sección.")
         return user
 
+    def is_idempotency_unique(error: IntegrityError, entity: str) -> bool:
+        original = error.orig
+        code = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+        text_error = str(original).lower()
+        if code == "23505":
+            constraint = getattr(getattr(original, "diag", None), "constraint_name", "") or ""
+            return "idempotency" in constraint.lower() or ("orders" in constraint.lower() if entity == "order" else "sales" in constraint.lower()) or "idempotency_key" in text_error
+        return f"{entity}s." in text_error and "idempotency_key" in text_error
+
     @app.post("/api/orders", status_code=201)
     def create_order(request: Request, payload: dict, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
         require_origin(request, origins)
         user = current_user(request, session_factory)
         key = require_idempotency(idempotency_key)
         with session_factory() as session:
-            if payload.get("fulfillment") != "envio":
-                raise HTTPException(status_code=422, detail="Por ahora las solicitudes web son únicamente para envío.")
             payment_intent = payload.get("paymentIntent", "NO_DEFINIDO")
-            if payment_intent not in {"NO_DEFINIDO", "AL_PEDIR", "AL_RECIBIR"}:
-                raise HTTPException(status_code=422, detail="La intención de pago no es válida.")
-            snapshots, subtotal = calculate_items(session, payload.get("items"), delivery_only_boxes=True)
             contact_reference = payload.get("contactReference")
-            if contact_reference is not None and (not isinstance(contact_reference, str) or len(contact_reference.strip()) > 120):
-                raise HTTPException(status_code=422, detail="La referencia de contacto es demasiado larga.")
-            contact_reference = contact_reference.strip() if isinstance(contact_reference, str) else None
-            fingerprint = payload_fingerprint({
-                "fulfillment": "envio", "paymentIntent": payment_intent, "contactReference": contact_reference,
-                "subtotalCents": subtotal,
-                "items": [{"slug": item["product"].slug, "quantity": item["quantity"], "snapshot": item["snapshot"]} for item in snapshots],
-            })
             existing = session.scalar(select(Order).where(Order.customer_id == user.id, Order.idempotency_key == key))
+            intention = order_intention(fulfillment=payload.get("fulfillment"), payment_intent=payment_intent, contact_reference=contact_reference, raw_items=payload.get("items"))
             if existing is not None:
                 stored_items = list(session.scalars(select(OrderItem).where(OrderItem.order_id == existing.id).order_by(OrderItem.id)))
-                existing_fingerprint = existing.payload_fingerprint or payload_fingerprint(order_fingerprint_data(existing, stored_items))
-                if existing_fingerprint != fingerprint:
+                existing_intention = json.loads(existing.idempotency_intent_json) if existing.idempotency_intent_json else historical_order_intention(existing, stored_items)
+                if existing_intention != intention:
                     raise HTTPException(status_code=409, detail="La clave de reintento ya fue usada con otra solicitud.")
                 return JSONResponse(status_code=200, content=order_json(session, existing))
+            snapshots, subtotal = calculate_items(session, payload.get("items"), delivery_only_boxes=True)
+            contact_reference = intention["contactReference"]
+            fingerprint = payload_fingerprint(intention)
             timestamp = now_utc()
-            order = Order(customer_id=user.id, fulfillment="envio", status="POR_CONFIRMAR", payment_status="PENDIENTE", payment_intent=payment_intent, delivery_status="PENDIENTE", subtotal_cents=subtotal, shipping_amount_cents=None, total_final_cents=None, contact_reference=contact_reference, idempotency_key=key, payload_fingerprint=fingerprint, created_at=timestamp, updated_at=timestamp)
+            order = Order(customer_id=user.id, fulfillment="envio", status="POR_CONFIRMAR", payment_status="PENDIENTE", payment_intent=payment_intent, delivery_status="PENDIENTE", subtotal_cents=subtotal, shipping_amount_cents=None, total_final_cents=None, contact_reference=contact_reference, idempotency_key=key, payload_fingerprint=fingerprint, idempotency_intent_json=json.dumps(intention, ensure_ascii=False, sort_keys=True), created_at=timestamp, updated_at=timestamp)
             session.add(order)
             try:
                 session.flush()
@@ -216,14 +223,16 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                     session.add(OrderItem(order_id=order.id, product_id=product.id, product_slug=product.slug, product_name=product.name, unit_price_cents=product.price_cents, quantity=item["quantity"], snapshot_json=json.dumps(item["snapshot"], ensure_ascii=False, sort_keys=True)))
                 session.commit()
                 return JSONResponse(status_code=201, content=order_json(session, order))
-            except IntegrityError:
+            except IntegrityError as error:
                 session.rollback()
+                if not is_idempotency_unique(error, "order"):
+                    raise
                 winner = session.scalar(select(Order).where(Order.customer_id == user.id, Order.idempotency_key == key))
                 if winner is None:
                     raise
                 winner_items = list(session.scalars(select(OrderItem).where(OrderItem.order_id == winner.id).order_by(OrderItem.id)))
-                winner_fingerprint = winner.payload_fingerprint or payload_fingerprint(order_fingerprint_data(winner, winner_items))
-                if winner_fingerprint != fingerprint:
+                winner_intention = json.loads(winner.idempotency_intent_json) if winner.idempotency_intent_json else historical_order_intention(winner, winner_items)
+                if winner_intention != intention:
                     raise HTTPException(status_code=409, detail="La clave de reintento ya fue usada con otra solicitud.")
                 return JSONResponse(status_code=200, content=order_json(session, winner))
 
@@ -264,19 +273,10 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         require_origin(request, origins)
         actor = require_operator(request)
         key = require_idempotency(idempotency_key)
-        if payload.get("receivedConfirmed") is not True:
-            raise HTTPException(status_code=422, detail="El operador debe confirmar explícitamente la recepción del pago.")
         method = payload.get("paymentMethod")
-        if method not in {"efectivo", "transferencia", "EFECTIVO", "TRANSFERENCIA"}:
-            raise HTTPException(status_code=422, detail="El medio debe ser efectivo o transferencia.")
         customer_name = payload.get("customerName")
-        if customer_name is not None and (not isinstance(customer_name, str) or len(customer_name.strip()) > 120):
-            raise HTTPException(status_code=422, detail="El nombre del cliente es demasiado largo.")
         reference = payload.get("reference")
-        if reference is not None and (not isinstance(reference, str) or len(reference.strip()) > 120):
-            raise HTTPException(status_code=422, detail="La referencia es demasiado larga.")
         with session_factory() as session:
-            snapshots, subtotal = calculate_items(session, payload.get("items"), delivery_only_boxes=False)
             customer_id = None
             customer_email = payload.get("customerEmail")
             if customer_email:
@@ -286,23 +286,21 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                     raise HTTPException(status_code=422, detail=str(error)) from error
                 member = session.scalar(select(User).where(User.email == normalized, User.active.is_(True)))
                 customer_id = member.id if member is not None else None
-            normalized_method = method.upper()
-            customer_name = customer_name.strip() if isinstance(customer_name, str) else None
-            reference = reference.strip() if isinstance(reference, str) else None
-            fingerprint = payload_fingerprint({
-                "paymentMethod": normalized_method, "customerId": customer_id, "customerName": customer_name,
-                "reference": reference, "subtotalCents": subtotal,
-                "items": [{"slug": item["product"].slug, "quantity": item["quantity"], "snapshot": item["snapshot"]} for item in snapshots],
-            })
             existing = session.scalar(select(Sale).where(Sale.actor_id == actor.id, Sale.idempotency_key == key))
+            intention = sale_intention(payment_method=method, customer_id=customer_id, customer_name=customer_name, reference=reference, received_confirmed=payload.get("receivedConfirmed"), raw_items=payload.get("items"))
             if existing is not None:
                 stored_items = list(session.scalars(select(SaleItem).where(SaleItem.sale_id == existing.id).order_by(SaleItem.id)))
-                existing_fingerprint = existing.payload_fingerprint or payload_fingerprint(sale_fingerprint_data(existing, stored_items))
-                if existing_fingerprint != fingerprint:
+                existing_intention = json.loads(existing.idempotency_intent_json) if existing.idempotency_intent_json else historical_sale_intention(existing, stored_items)
+                if existing_intention != intention:
                     raise HTTPException(status_code=409, detail="La clave de reintento ya fue usada con otra venta.")
                 return JSONResponse(status_code=200, content=sale_json(session, existing))
+            snapshots, subtotal = calculate_items(session, payload.get("items"), delivery_only_boxes=False)
+            normalized_method = intention["paymentMethod"]
+            customer_name = intention["customerName"]
+            reference = intention["reference"]
+            fingerprint = payload_fingerprint(intention)
             timestamp = now_utc()
-            sale = Sale(actor_id=actor.id, customer_id=customer_id, payment_method=normalized_method, payment_status="RECIBIDO", subtotal_cents=subtotal, customer_name=customer_name, reference=reference, idempotency_key=key, payload_fingerprint=fingerprint, received_confirmed_at=timestamp, created_at=timestamp)
+            sale = Sale(actor_id=actor.id, customer_id=customer_id, payment_method=normalized_method, payment_status="RECIBIDO", subtotal_cents=subtotal, customer_name=customer_name, reference=reference, idempotency_key=key, payload_fingerprint=fingerprint, idempotency_intent_json=json.dumps(intention, ensure_ascii=False, sort_keys=True), received_confirmed_at=timestamp, created_at=timestamp)
             session.add(sale)
             try:
                 session.flush()
@@ -311,14 +309,16 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                     session.add(SaleItem(sale_id=sale.id, product_id=product.id, product_slug=product.slug, product_name=product.name, unit_price_cents=product.price_cents, quantity=item["quantity"], snapshot_json=json.dumps(item["snapshot"], ensure_ascii=False, sort_keys=True)))
                 session.commit()
                 return JSONResponse(status_code=201, content=sale_json(session, sale))
-            except IntegrityError:
+            except IntegrityError as error:
                 session.rollback()
+                if not is_idempotency_unique(error, "sale"):
+                    raise
                 winner = session.scalar(select(Sale).where(Sale.actor_id == actor.id, Sale.idempotency_key == key))
                 if winner is None:
                     raise
                 winner_items = list(session.scalars(select(SaleItem).where(SaleItem.sale_id == winner.id).order_by(SaleItem.id)))
-                winner_fingerprint = winner.payload_fingerprint or payload_fingerprint(sale_fingerprint_data(winner, winner_items))
-                if winner_fingerprint != fingerprint:
+                winner_intention = json.loads(winner.idempotency_intent_json) if winner.idempotency_intent_json else historical_sale_intention(winner, winner_items)
+                if winner_intention != intention:
                     raise HTTPException(status_code=409, detail="La clave de reintento ya fue usada con otra venta.")
                 return JSONResponse(status_code=200, content=sale_json(session, winner))
 

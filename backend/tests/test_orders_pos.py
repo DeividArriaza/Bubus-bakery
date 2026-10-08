@@ -128,6 +128,40 @@ def test_order_idempotency_key_with_different_logical_payload_is_conflict():
     assert "reintento" in different.json()["error"].lower()
 
 
+def test_order_replay_uses_historical_intention_after_price_change_and_inactive_product():
+    client, factory = setup_clients()
+    token = create_user(factory, "historical-order@example.com")
+    body = {"fulfillment": "envio", "items": [{"slug": "simple-caja-6", "quantity": 1, "priceCents": 1}]}
+    first = client.post("/api/orders", json=body, headers=auth_headers(token, "historical-order"))
+    assert first.status_code == 201
+    with factory() as session:
+        product = session.scalar(select(Product).where(Product.slug == "simple-caja-6"))
+        product.price_cents = 999999
+        product.active = False
+        session.commit()
+    replay = client.post("/api/orders", json=body, headers=auth_headers(token, "historical-order"))
+    assert replay.status_code == 200
+    assert replay.json()["id"] == first.json()["id"]
+    assert replay.json()["subtotalCents"] == 6000
+
+
+def test_sale_replay_uses_historical_intention_after_price_change_and_inactive_product():
+    client, factory = setup_clients()
+    token = create_user(factory, "historical-operator@example.com", "operator")
+    body = {"items": [{"slug": "simple", "quantity": 1, "priceCents": 1}], "paymentMethod": "efectivo", "receivedConfirmed": True}
+    first = client.post("/api/operator/sales", json=body, headers=auth_headers(token, "historical-sale"))
+    assert first.status_code == 201
+    with factory() as session:
+        product = session.scalar(select(Product).where(Product.slug == "simple"))
+        product.price_cents = 999999
+        product.active = False
+        session.commit()
+    replay = client.post("/api/operator/sales", json=body, headers=auth_headers(token, "historical-sale"))
+    assert replay.status_code == 200
+    assert replay.json()["id"] == first.json()["id"]
+    assert replay.json()["subtotalCents"] == 1000
+
+
 def test_operator_can_register_cash_sale_and_customer_cannot_or_claim_receipt():
     client, factory = setup_clients()
     customer = create_user(factory, "customer@example.com")

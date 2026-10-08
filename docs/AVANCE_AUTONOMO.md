@@ -49,9 +49,9 @@ TDD real: tests nuevos RED por import faltante; después RED de resolución de o
 
 Browser end-to-end real desktop/móvil: cliente creó solicitud visible al operador; operador confirmó y registró venta. Capturas: `docs/design-review/orders-mobile.jpg`/`.b64` y `pos-desktop.jpg`/`.b64`. Sin requests fallidas ni errores de consola no esperados. Los estados, cobertura, costo y total final quedan honestamente pendientes de confirmación de la dueña.
 
-## Revisión final independiente del mismo agente
+## Revisión final externa reportada; correcciones por este agente
 
-No fue una revisión hecha por otro modelo/agente. Se inspeccionaron auth, Origin/CSRF, CORS, roles, sesiones revocables, snapshots de precio/composición, privacidad, idempotencia, auditoría POS, ciclos del catálogo, secretos ignorados, Compose, DB privada y healthchecks. Se corrigió un fallo concreto de CORS: PATCH y `Idempotency-Key` no estaban declarados; ahora el preflight está cubierto por `test_cors_allows_authenticated_patch_and_idempotency_header_only_from_dev_origin`. Se añadió referencia interna no sensible de venta mediante migración 007 y foco visible en UI.
+La revisión externa reportó esos aspectos; este agente implementador los reprodujo y corrigió, sin ser el reviewer original. Se inspeccionaron auth, Origin/CSRF, CORS, roles, sesiones revocables, snapshots de precio/composición, privacidad, idempotencia, auditoría POS, ciclos del catálogo, secretos ignorados, Compose, DB privada y healthchecks. Se corrigió un fallo concreto de CORS: PATCH y `Idempotency-Key` no estaban declarados; ahora el preflight está cubierto por `test_cors_allows_authenticated_patch_and_idempotency_header_only_from_dev_origin`. Se añadió referencia interna no sensible de venta mediante migración 007 y foco visible en UI.
 
 Resultados reproducibles de la revisión de integridad (sin borrar volumen): `docker compose build api && docker compose up -d api`; migraciones actuales `001..008`; `docker compose exec -T api pytest -q` → `21 passed, 4 skipped, 2 warnings`; suite PostgreSQL aislada → `3 passed, 2 warnings`; Compose, frontend, build/typecheck y auditorías siguen documentados en `docs/REVISION_INDEPENDIENTE.md`. Servicios locales: `http://localhost:5173`, `http://localhost:8000/api/health`; DB sin puerto host.
 
@@ -66,3 +66,13 @@ La revisión independiente vigente corrigió idempotencia frontend con doble sub
 Se reprodujeron tres hallazgos reales sobre el SHA `90a1f0f`: seed incompleto cuando migraciones ya habían creado el grupo de opciones; colisión concurrente de idempotencia; y `KeyError`/composición vendible al desactivar componentes u opciones. Se corrigieron con seed aditivo por relación, huella lógica y resolución del ganador tras `IntegrityError` únicamente si existe, `SELECT FOR UPDATE` para estados, validación de grafo acíclico y filtrado de relaciones vendibles. La migración aditiva es `008_idempotency_fingerprints.sql`.
 
 La suite aislada crea un schema PostgreSQL nuevo, aplica `001..008`, ejecuta seed dos veces y elimina solo ese schema de prueba: `3 passed, 2 warnings`; cubre 9 activos, mixta 2 Snickers + 3 M&M + Almendra/Simple, concurrencia pedido/venta y carrera cancelar/confirmar. SQLite se usa solo para validaciones sin garantía de concurrencia; no se presenta como prueba de locks Postgres. La aceptación final queda pendiente del ciclo padre.
+
+## Corrección ciclo 2 — pendiente de aceptación padre
+
+La segunda revisión externa independiente sobre `f9dd024` reportó cuatro hallazgos. Este agente implementador los reprodujo y corrigió; no fue el reviewer original ni se presenta esta sección como aprobación.
+
+- Body auth chunked: límite real por stream antes de JSON/hash, `413` español y sin almacenamiento ilimitado.
+- Idempotencia: migración aditiva `009_idempotency_intentions.sql`, lookup actor+clave primero, intención normalizada independiente de precio/estado actual, replay histórico `200`, conflicto lógico `409` y `IntegrityError` no relacionado no se absorbe.
+- UI: selección de opción válida por producto y operación incierta con payload congelado, doble submit bloqueado, reintento/recuperación explícitos y nueva operación explícita.
+
+Evidencia: backend `26 passed, 5 skipped`; PostgreSQL aislado `4 passed`; frontend `11 passed`, typecheck/build correctos; npm audit `0`; pip-audit aislado `No known vulnerabilities found`; Compose tres servicios healthy; capturas `docs/design-review/ux-ciclo-dos-1440.jpg(.b64)` y `ux-ciclo-dos-390.jpg(.b64)`. Padre aún debe aceptar.

@@ -89,6 +89,7 @@ class Order(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     payload_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_intent_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     __table_args__ = (UniqueConstraint("customer_id", "idempotency_key"),)
 
 
@@ -118,6 +119,7 @@ class Sale(Base):
     received_confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     payload_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_intent_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     __table_args__ = (UniqueConstraint("actor_id", "idempotency_key"),)
 
 

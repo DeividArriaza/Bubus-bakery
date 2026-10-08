@@ -2,7 +2,7 @@
 
 Fecha: 2026-10-08 · rama `feat/base-catalogo` · base inspeccionada `90a1f0fa90d1b124ebdeec2050acad2977e7af05`
 
-Esta fue una revisión independiente dentro del mismo agente. No se usó otro modelo/agente y no se amplió el alcance funcional.
+El reporte base provino de una revisión externa independiente. Este agente implementador no es el reviewer original: reprodujo los hallazgos y aplicó únicamente las correcciones de este ciclo.
 
 ## RED reproducible
 
@@ -42,6 +42,32 @@ SQLite mantiene pruebas de validación/catálogos, pero no se usa para afirmar g
 Verificaciones adicionales tras la corrección: `docker compose ps` mostró `db`, `api`, `frontend` healthy; PostgreSQL conservó migraciones `001..008`, 9 productos activos y relaciones históricas inactivas sin ser borradas; `curl -fsS http://127.0.0.1:8000/api/health` devolvió `{"status":"ok","servicio":"api"}`. La suite frontend mantuvo `5 passed`, typecheck/build correctos y `npm audit --audit-level=moderate` → `found 0 vulnerabilities`; `pip-audit -r backend/requirements.lock.txt` → `No known vulnerabilities found`.
 
 La aceptación por el ciclo padre sigue pendiente. No se implementaron puntos, Wallet ni otras decisiones diferidas.
+
+## Corrección ciclo 2 — pendiente de aceptación padre
+
+Origen: la segunda revisión externa independiente sobre `f9dd024`; este agente implementador reprodujo y corrigió los hallazgos, sin afirmar ser ese reviewer.
+
+### RED real reproducible
+
+- `docker compose run --rm --no-deps -v "$PWD/backend:/app" api pytest -q tests/test_auth.py::test_chunked_auth_body_is_rejected_before_json_or_hash tests/test_orders_pos.py::test_order_replay_uses_historical_intention_after_price_change_and_inactive_product tests/test_orders_pos.py::test_sale_replay_uses_historical_intention_after_price_change_and_inactive_product` → `3 failed, 2 warnings`: body chunked terminó en 400 y los dos reintentos históricos fueron 422.
+- Frontend: el nuevo caso de operación incierta falló porque la cantidad seguía editable tras error de red.
+
+### Cambios acotados
+
+- El middleware de auth consume el stream en chunks con límite acumulado de 8192 bytes antes de JSON, validación o hash; responde `413` en español y no conserva un body sobre el límite. `Content-Length` queda solo como rechazo temprano.
+- Migración aditiva `009_idempotency_intentions.sql` guarda la intención normalizada (slug, cantidad, opciones y campos lógicos), ignorando `priceCents`. Pedido/venta buscan primero por actor+clave; un replay idéntico devuelve el snapshot histórico `200` aunque cambie precio o disponibilidad. Payload lógico distinto conserva `409`; operaciones nuevas calculan precio desde catálogo vigente. Legacy recupera intención desde sus snapshots.
+- La captura de `IntegrityError` solo resuelve la restricción de idempotencia identificada; errores de integridad distintos se relanzan.
+- Cliente y POS reconcilian opciones contra el producto seleccionado; una operación incierta congela un payload y clave, ofrece `Reintentar`, `Recuperar resultado` y `Nueva operación`, y solo limpia tras éxito o acción explícita.
+
+### GREEN y verificaciones actuales
+
+- `docker compose run --rm --no-deps -v "$PWD/backend:/app" api pytest -q` → `26 passed, 4 skipped, 2 warnings`.
+- `docker compose exec -T api sh -lc 'TEST_DATABASE_URL="$DATABASE_URL" pytest -q tests/test_postgres_integrity.py'` → `4 passed, 2 warnings`; schema PostgreSQL aislado, migraciones `001..009`, concurrencia, replay histórico y cancel/confirm sin borrar volumen.
+- `frontend/`: `npm run test:run` → `11 passed`; `npm run typecheck` y `npm run build` → correctos; `npm audit --audit-level=high` → `found 0 vulnerabilities`.
+- Auditoría aislada sin modificar el repo: `docker run --rm -v "$PWD/backend:/audit:ro" python:3.12-slim ... pip-audit -r /audit/requirements.lock.txt` → `No known vulnerabilities found`.
+- `docker compose up -d --build`, health/API real y catálogo → 9 productos; `db`, `api`, `frontend` healthy, DB sin puerto host. Playwright desktop/móvil → consola sin errores; capturas nuevas: `docs/design-review/ux-ciclo-dos-1440.jpg(.b64)` y `ux-ciclo-dos-390.jpg(.b64)`, cada `.b64` <55 000 caracteres.
+
+No se implementaron puntos, Wallet, Google, email, pagos tarjeta, cobertura/envío ni otros pendientes. No es aprobación del padre ni claim de producción.
 
 ## Corrección seguridad, UX e idempotencia frontend — pendiente de aceptación padre
 

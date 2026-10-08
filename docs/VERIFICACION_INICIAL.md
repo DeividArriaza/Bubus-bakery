@@ -60,9 +60,9 @@ Capturas JPG y base64 (<55 000 caracteres por archivo):
 
 Se extrajeron dos fotos reales embebidas del PDF a frontend/public/assets/. No se copiaron reseñas, “baked daily”, precios ni promesas de muestra como hechos del negocio. Quedan pendientes endurecimiento, observabilidad, backups probados, despliegue y revisión de contenido/legal.
 
-## Revisión final y alcance vigente
+## Revisión externa reportada y alcance vigente
 
-La revisión final fue independiente dentro del mismo agente, no por un modelo reviewer distinto. Se verificaron auth/CSRF/CORS/roles/sesiones, ciclos del catálogo, precios y snapshots históricos, privacidad/idempotencia de solicitudes, auditoría POS, secretos, Docker/DB privada/localhost/healthchecks, foco y etiquetas móviles. Hallazgos corregidos: CORS ahora declara PATCH e Idempotency-Key; ventas guardan referencia interna no sensible mediante migración 007; UI tiene foco visible.
+La revisión final fue externa; este agente implementador reprodujo sus hallazgos y no fue el reviewer original. Se verificaron auth/CSRF/CORS/roles/sesiones, ciclos del catálogo, precios y snapshots históricos, privacidad/idempotencia de solicitudes, auditoría POS, secretos, Docker/DB privada/localhost/healthchecks, foco y etiquetas móviles. Hallazgos corregidos: CORS ahora declara PATCH e Idempotency-Key; ventas guardan referencia interna no sensible mediante migración 007; UI tiene foco visible.
 
 La revisión de dependencias está documentada en `docs/REVISION_DEPENDENCIAS.md`: se actualizaron FastAPI/Starlette, pytest, uvicorn, SQLAlchemy y psycopg con resolver real; no se usó `pip-audit --ignore-vulns`, `npm audit fix --force` ni se hizo claim de producción.
 
@@ -71,3 +71,15 @@ Comandos finales: `docker compose build && docker compose up -d` sin `-v`; migra
 La smoke browser real cubrió cliente crea solicitud → operador consulta/confirmación → venta POS; capturas adicionales: `docs/design-review/orders-mobile.jpg`/`.b64` y `pos-desktop.jpg`/`.b64`, cada `.b64` bajo 55 000 caracteres. URLs locales: `http://localhost:5173` y `http://localhost:8000/api/health`. `db`, `api` y `frontend` quedaron healthy; reinicio/rebuild fue sin borrar volumen.
 
 Diferido y no fingido: Google por falta de configuración, proveedor de verificación/recuperación de correo, puntos hasta aprobar costes/reglas, Wallet, app nativa/PWA, tarjetas, inventario, banco, reparto, cobertura/coste/logística y devoluciones. No hay claim de producción.
+
+## Corrección ciclo 2 — evidencia reproducible (pendiente de aceptación padre)
+
+Origen: segunda revisión externa independiente de `f9dd024`; el agente actual implementó las correcciones y reprodujo los casos, no fue el reviewer original.
+
+- RED real: 3 pruebas nuevas fallaron antes de corregir body chunked/replay histórico; frontend falló porque la cantidad quedaba editable tras error incierto.
+- GREEN: backend `docker compose exec -T api pytest -q` → `26 passed, 5 skipped, 2 warnings`; PostgreSQL aislado con `TEST_DATABASE_URL="$DATABASE_URL"` → `4 passed, 2 warnings`; frontend `npm run test:run` → `11 passed`; typecheck/build correctos.
+- Auditorías: `npm audit --audit-level=high` → `found 0 vulnerabilities`; `pip-audit` en contenedor efímero readonly sobre `backend/requirements.lock.txt` → `No known vulnerabilities found`.
+- Migración `009_idempotency_intentions.sql` aplicada en PostgreSQL existente sin borrar volumen; `schema_migrations` llega a `009`; catálogo HTTP devuelve 9. `curl http://127.0.0.1:8000/api/health` correcto.
+- Compose reconstruido con `docker compose up -d --build`; `db`, `api`, `frontend` healthy; API `127.0.0.1:8000`, frontend `127.0.0.1:5173`, DB sin puerto publicado.
+- Browser Playwright real: landing desktop/móvil, consola sin errores; capturas nuevas en `docs/design-review/ux-ciclo-dos-1440.jpg`, `.jpg.b64`, `ux-ciclo-dos-390.jpg`, `.jpg.b64` (cada b64 <55 000 caracteres).
+- Diferido: aceptación padre, puntos/Wallet/Google/email/pagos tarjeta/cobertura y claim de producción.

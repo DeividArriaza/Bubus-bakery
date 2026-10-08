@@ -119,6 +119,77 @@ def payload_fingerprint(payload: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def normalize_intention_items(raw_items: object) -> list[dict]:
+    if not isinstance(raw_items, list) or not raw_items or len(raw_items) > MAX_LINES:
+        raise _error(f"Incluye entre 1 y {MAX_LINES} productos.")
+    normalized = []
+    for raw in raw_items:
+        if not isinstance(raw, dict) or not isinstance(raw.get("slug"), str) or not raw["slug"].strip():
+            raise _error("Uno de los productos no es válido.")
+        quantity = raw.get("quantity")
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1 or quantity > MAX_QUANTITY:
+            raise _error(f"La cantidad debe ser un entero entre 1 y {MAX_QUANTITY}.")
+        raw_options = raw.get("options") or {}
+        if not isinstance(raw_options, dict) or any(not isinstance(key, str) or not isinstance(value, str) for key, value in raw_options.items()):
+            raise _error("Las opciones del producto no son válidas.")
+        normalized.append({"slug": raw["slug"].strip(), "quantity": quantity, "options": {key: raw_options[key] for key in sorted(raw_options)}})
+    return normalized
+
+
+def order_intention(*, fulfillment: object, payment_intent: object, contact_reference: object, raw_items: object) -> dict:
+    if fulfillment != "envio":
+        raise _error("Por ahora las solicitudes web son únicamente para envío.")
+    if payment_intent not in {"NO_DEFINIDO", "AL_PEDIR", "AL_RECIBIR"}:
+        raise _error("La intención de pago no es válida.")
+    if contact_reference is not None and (not isinstance(contact_reference, str) or len(contact_reference.strip()) > 120):
+        raise _error("La referencia de contacto es demasiado larga.")
+    return {
+        "fulfillment": "envio",
+        "paymentIntent": payment_intent,
+        "contactReference": contact_reference.strip() if isinstance(contact_reference, str) else None,
+        "items": normalize_intention_items(raw_items),
+    }
+
+
+def sale_intention(*, payment_method: object, customer_id: int | None, customer_name: object, reference: object, received_confirmed: object, raw_items: object) -> dict:
+    if payment_method not in {"efectivo", "transferencia", "EFECTIVO", "TRANSFERENCIA"}:
+        raise _error("El medio debe ser efectivo o transferencia.")
+    if customer_name is not None and (not isinstance(customer_name, str) or len(customer_name.strip()) > 120):
+        raise _error("El nombre del cliente es demasiado largo.")
+    if reference is not None and (not isinstance(reference, str) or len(reference.strip()) > 120):
+        raise _error("La referencia es demasiado larga.")
+    if received_confirmed is not True:
+        raise _error("El operador debe confirmar explícitamente la recepción del pago.")
+    return {
+        "paymentMethod": payment_method.upper(),
+        "customerId": customer_id,
+        "customerName": customer_name.strip() if isinstance(customer_name, str) else None,
+        "reference": reference.strip() if isinstance(reference, str) else None,
+        "receivedConfirmed": True,
+        "items": normalize_intention_items(raw_items),
+    }
+
+
+def historical_order_intention(order: Order, items: list[OrderItem]) -> dict:
+    return {
+        "fulfillment": order.fulfillment,
+        "paymentIntent": order.payment_intent,
+        "contactReference": order.contact_reference,
+        "items": [{"slug": item.product_slug, "quantity": item.quantity, "options": {option["group"]: option["product"] for option in json.loads(item.snapshot_json).get("selectedOptions", [])}} for item in items],
+    }
+
+
+def historical_sale_intention(sale: Sale, items: list[SaleItem]) -> dict:
+    return {
+        "paymentMethod": sale.payment_method,
+        "customerId": sale.customer_id,
+        "customerName": sale.customer_name,
+        "reference": sale.reference,
+        "receivedConfirmed": True,
+        "items": [{"slug": item.product_slug, "quantity": item.quantity, "options": {option["group"]: option["product"] for option in json.loads(item.snapshot_json).get("selectedOptions", [])}} for item in items],
+    }
+
+
 def order_fingerprint_data(order: Order, items: list[OrderItem]) -> dict:
     return {
         "fulfillment": order.fulfillment,

@@ -12,7 +12,7 @@ from sqlalchemy.engine import make_url
 from app.auth import create_session, hash_password
 from app.db import apply_migrations, make_session_factory, seed_catalog
 from app.main import create_app
-from app.models import Order, Sale, User
+from app.models import Order, Product, Sale, User
 
 
 def _isolated_database():
@@ -109,6 +109,29 @@ def test_postgres_order_and_sale_concurrent_retries_return_one_winner(postgres_c
     assert sorted(response.status_code for response in sale_responses) == [200, 201]
     with factory() as session:
         assert len(session.scalars(select(Sale)).all()) == 1
+
+
+def test_postgres_historical_replays_ignore_current_price_and_availability(postgres_catalog):
+    factory, _ = postgres_catalog
+    customer = _user(factory, "historical-pg-customer@example.com")
+    operator = _user(factory, "historical-pg-operator@example.com", "operator")
+    app = create_app(factory)
+    order_body = {"fulfillment": "envio", "items": [{"slug": "simple-caja-6", "quantity": 1, "priceCents": 1}]}
+    order = TestClient(app).post("/api/orders", json=order_body, headers=_headers(customer, "historical-pg-order"))
+    assert order.status_code == 201
+    sale_body = {"items": [{"slug": "simple", "quantity": 1, "priceCents": 1}], "paymentMethod": "efectivo", "receivedConfirmed": True}
+    sale = TestClient(app).post("/api/operator/sales", json=sale_body, headers=_headers(operator, "historical-pg-sale"))
+    assert sale.status_code == 201
+    with factory() as session:
+        session.scalar(select(Product).where(Product.slug == "simple-caja-6")).active = False
+        session.scalar(select(Product).where(Product.slug == "simple-caja-6")).price_cents = 999999
+        session.scalar(select(Product).where(Product.slug == "simple")).active = False
+        session.scalar(select(Product).where(Product.slug == "simple")).price_cents = 999999
+        session.commit()
+    replay_order = TestClient(app).post("/api/orders", json=order_body, headers=_headers(customer, "historical-pg-order"))
+    replay_sale = TestClient(app).post("/api/operator/sales", json=sale_body, headers=_headers(operator, "historical-pg-sale"))
+    assert replay_order.status_code == 200 and replay_order.json()["id"] == order.json()["id"]
+    assert replay_sale.status_code == 200 and replay_sale.json()["id"] == sale.json()["id"]
 
 
 def test_postgres_cancel_confirm_race_cannot_reopen_cancelled_order(postgres_catalog):

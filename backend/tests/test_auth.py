@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import asyncio
 import time
 
 from fastapi.testclient import TestClient
@@ -124,3 +125,32 @@ def test_auth_rejects_oversize_password_and_duplicate_before_hash(monkeypatch):
     duplicate = client.post("/api/auth/register", json=register_payload(), headers={"Origin": ORIGIN})
     assert duplicate.status_code == 409
     assert calls == 0
+
+
+def test_chunked_auth_body_is_rejected_before_json_or_hash(monkeypatch):
+    client, _ = auth_client()
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module.Request, "json", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("json no debe ejecutarse")))
+    monkeypatch.setattr(main_module, "hash_password", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("hash no debe ejecutarse")))
+    messages = [
+        {"type": "http.request", "body": b"{" + (b"x" * 9000), "more_body": False},
+    ]
+    sent = []
+
+    async def receive():
+        return messages.pop(0)
+
+    async def send(message):
+        sent.append(message)
+
+    async def invoke():
+        await client.app({
+            "type": "http", "http_version": "1.1", "method": "POST", "scheme": "http",
+            "path": "/api/auth/register", "raw_path": b"/api/auth/register", "query_string": b"",
+            "headers": [(b"origin", ORIGIN.encode()), (b"content-type", b"application/json")],
+            "client": ("127.0.0.1", 5000), "server": ("testserver", 80),
+        }, receive, send)
+
+    asyncio.run(invoke())
+    assert sent[0]["status"] == 413
