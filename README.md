@@ -11,7 +11,8 @@ Primera entrega real: landing responsive y catálogo público servido por una AP
 - El registro histórico `mixta` de la demo se conserva como legado inactivo; la presentación vendible normalizada es `mixta-caja-6`.
 - Migración versionada y seed idempotente.
 - API pública de lectura: `GET /api/health` y `GET /api/catalog`.
-- No incluye login, pedidos, checkout, POS, puntos ni Wallet.
+- Registro, login, logout y sesión de cliente con sesiones opacas revocables en PostgreSQL, contraseña con scrypt y cookies HttpOnly SameSite.
+- No incluye pedidos, checkout, POS, puntos ni Wallet. Google y correo de verificación/recuperación quedan diferidos: no hay proveedor ni secretos configurados.
 
 ## Ejecutar con Docker Compose
 
@@ -34,6 +35,14 @@ URLs locales:
 La base de datos no publica un puerto al host. El volumen `postgres_data` conserva la información; el seed no duplica productos al reiniciar.
 
 Los servicios se publican solo en `127.0.0.1`: frontend en `5173` y API en `8000`.
+
+## Cuentas de cliente y operador
+
+La UI permite crear cuenta e iniciar/cerrar sesión. Las operaciones con cookies exigen un `Origin` permitido; nunca se guarda una contraseña o sesión en el navegador. El correo queda sin verificar hasta disponer de un proveedor de correo y no se exponen tokens de recuperación.
+
+Google aparece deshabilitado con estado “próximamente” porque faltan `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y un redirect URI aprobado; no se simula el acceso. La integración real queda pendiente de configurar state/nonce y validación de tokens.
+
+No existe operador predeterminado. Para crear uno explícitamente en un entorno local, configura temporalmente `DATABASE_URL` y ejecuta `python -m app.bootstrap_operator`; el comando solicita la contraseña sin mostrarla. También acepta `BOOTSTRAP_OPERATOR_EMAIL`, `BOOTSTRAP_OPERATOR_NAME` y `BOOTSTRAP_OPERATOR_PASSWORD` en el entorno del proceso, nunca en el repositorio.
 
 ## Desarrollo sin Compose
 

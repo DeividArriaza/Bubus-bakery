@@ -1,0 +1,16 @@
+{
+  "stage": "cuentas",
+  "complete": true,
+  "tests_passed": true,
+  "branch": "feat/base-catalogo",
+  "detail": {
+    "backend": "9 passed, 1 skipped, 1 warning; auth integration real: register 201, session 200, logout 204, revoked session 401",
+    "frontend": "5 passed; typecheck correcto; build correcto",
+    "audit": "npm audit moderate: 0 vulnerabilities; pip-audit unavailable; pip check limpio",
+    "compose": "build/up correcto; db/api/frontend healthy; catálogo 9 activos (4 individuales, 5 cajas); DB privada en red interna",
+    "security": "scrypt; sesión opaca hash en DB; cookie HttpOnly/SameSite; Secure configurable; Origin/CORS localhost; role customer no asignable",
+    "google_email": "Google no configurado: endpoint 503 y botón deshabilitado; proveedor de verificación/recuperación pendiente sin tokens públicos",
+    "browser": "Playwright desktop/móvil: acceso español, Google disabled, sin requests fallidas; 401 de sesión anónima esperado",
+    "migration": "004_auth.sql aplicada sin borrar volumen; sesión persistió tras reinicio de API"
+  }
+}

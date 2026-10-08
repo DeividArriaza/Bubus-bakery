@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { fetchCatalog } from "./api";
+import { getSession, login, logout, register } from "./auth";
+import type { AuthUser } from "./auth";
 import type { Product } from "./types";
 
 type Filter = "todos" | "individual" | "caja";
@@ -35,12 +37,47 @@ function ProductOptions({ product }: { product: Product }) {
   </div>;
 }
 
+function AuthPanel({ onClose }: { onClose: () => void }) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [fields, setFields] = useState({ email: "", password: "", name: "" });
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { getSession().then(setUser).catch(() => setMessage("No pudimos consultar tu sesión.")); }, []);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setMessage(null);
+    try {
+      const result = mode === "login" ? await login({ email: fields.email, password: fields.password }) : await register(fields);
+      setUser(result.user);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "No pudimos completar la solicitud."); }
+    finally { setBusy(false); }
+  }
+  async function signOut() { await logout(); setUser(null); }
+  return <section className="auth-panel" aria-label="Acceso de clientes">
+    <div className="auth-panel__heading"><div><p className="eyebrow">CUENTA DE CLIENTE</p><h2>{user ? `Hola, ${user.name}` : mode === "login" ? "Bienvenido de nuevo." : "Crea tu cuenta."}</h2></div><button className="close-button" onClick={onClose} aria-label="Cerrar acceso">×</button></div>
+    {user ? <div className="auth-success" role="status"><p>Sesión activa para {user.email}.</p><p className="muted">Tu correo aún no está verificado. La verificación y recuperación estarán disponibles cuando exista un proveedor de correo.</p><button className="outline-button" onClick={signOut}>Cerrar sesión</button></div> : <>
+      <div className="auth-tabs" role="tablist" aria-label="Tipo de acceso"><button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} role="tab" aria-selected={mode === "login"}>Iniciar sesión</button><button className={mode === "register" ? "active" : ""} onClick={() => setMode("register")} role="tab" aria-selected={mode === "register"}>Crear cuenta</button></div>
+      <form onSubmit={submit} className="auth-form">
+        {mode === "register" && <label>Nombre<input required value={fields.name} onChange={(event) => setFields({ ...fields, name: event.target.value })} autoComplete="name" /></label>}
+        <label>Correo electrónico<input required type="email" value={fields.email} onChange={(event) => setFields({ ...fields, email: event.target.value })} autoComplete="email" /></label>
+        <label>Contraseña<input required minLength={12} type="password" value={fields.password} onChange={(event) => setFields({ ...fields, password: event.target.value })} autoComplete={mode === "login" ? "current-password" : "new-password"} /></label>
+        {message && <p className="state state--error" role="alert">{message}</p>}
+        <button className="primary-button auth-submit" disabled={busy}>{busy ? "Procesando…" : mode === "login" ? "Iniciar sesión" : "Crear cuenta"}</button>
+      </form>
+      <button className="google-button" disabled title="Google no está configurado todavía">Continuar con Google <span>(próximamente)</span></button>
+      <p className="muted">No enviaremos correos ni mostraremos recuperación hasta configurar un proveedor seguro.</p>
+    </>}
+  </section>;
+}
+
 export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [filter, setFilter] = useState<Filter>("todos");
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showAuth, setShowAuth] = useState(false);
 
   useEffect(() => {
     fetchCatalog().then((data) => setProducts(data.products)).catch(() => setError("No pudimos cargar el catálogo. Intenta nuevamente más tarde.")).finally(() => setLoading(false));
@@ -49,7 +86,8 @@ export default function App() {
   const filteredProducts = useMemo(() => products.filter((product) => filter === "todos" || (filter === "caja" ? product.presentation === "caja6" : product.presentation === "individual")), [filter, products]);
 
   return <div className="site-shell">
-    <header className="topbar"><a className="brand" href="#inicio" aria-label="Bubu's bakery, inicio"><span>bubu's</span><small>BAKERY</small></a><nav aria-label="Navegación principal"><a href="#catalogo">Catálogo</a><a href="#historia">Nuestra historia</a><a href="#contacto">Visítanos</a></nav><a className="outline-button" href="#catalogo">Ver brownies</a></header>
+    <header className="topbar"><a className="brand" href="#inicio" aria-label="Bubu's bakery, inicio"><span>bubu's</span><small>BAKERY</small></a><nav aria-label="Navegación principal"><a href="#catalogo">Catálogo</a><a href="#historia">Nuestra historia</a><a href="#contacto">Visítanos</a></nav><div className="topbar__actions"><button className="outline-button" onClick={() => setShowAuth(true)}>Iniciar sesión</button><a className="primary-button" href="#catalogo">Ver brownies</a></div></header>
+    {showAuth && <AuthPanel onClose={() => setShowAuth(false)} />}
     <main>
       <section className="hero" id="inicio"><div className="hero__copy"><p className="eyebrow">BROWNIES HECHOS CON CARIÑO</p><h1>Un pequeño cuadrado.<br /><em>Mucha felicidad.</em></h1><p className="hero__lead">Brownies con centro suave, bordes intensos y una razón sencilla para hacer especial cualquier día.</p><a className="primary-button" href="#catalogo">Descubre el catálogo <span>↓</span></a></div><div className="hero__visual"><BrownieArtwork variant="hero" /><span className="stamp">100%<br />brownie</span><p>Hechos para compartir</p></div></section>
       <section className="catalog-section" id="catalogo"><div className="section-heading"><div><p className="eyebrow">ELIGE TU FAVORITO</p><h2>Encuentra tu brownie.</h2></div><p className="section-note">Catálogo base en quetzales.<br />Consulta las opciones de cada caja.</p></div><div className="filters" role="group" aria-label="Filtrar catálogo"><button className={filter === "todos" ? "filter-button active" : "filter-button"} onClick={() => setFilter("todos")}>Todos</button><button className={filter === "individual" ? "filter-button active" : "filter-button"} onClick={() => setFilter("individual")}>Brownies individuales</button><button className={filter === "caja" ? "filter-button active" : "filter-button"} onClick={() => setFilter("caja")}>Cajas de 6</button></div>{loading && <p className="state" role="status">Cargando catálogo…</p>}{error && <p className="state state--error" role="alert">{error}</p>}{!loading && !error && filteredProducts.length === 0 && <p className="state">No hay productos para este filtro.</p>}<div className="product-grid">{filteredProducts.map((product) => <ProductCard key={product.slug} product={product} selected={selected === product.slug} onSelect={() => setSelected(selected === product.slug ? null : product.slug)} />)}</div></section>

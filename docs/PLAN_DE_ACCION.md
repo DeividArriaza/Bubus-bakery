@@ -2,7 +2,7 @@
 
 ## 1. Estado y autoridad del documento
 
-- Versión: 0.3 — stack inicial e idioma de interfaz confirmados; alcance implementado limitado a landing y catálogo.
+- Versión: 0.4 — stack, idioma, diseño adaptable y cuentas de cliente confirmados; pedidos y operación siguen fuera de esta etapa.
 - Este documento conserva el contexto de negocio y orienta futuras tareas delegadas. NO autoriza implementar todos los módulos ni tomar decisiones pendientes sin aprobación.
 - Los agentes deben leerlo antes de trabajar y limitarse al encargo concreto recibido.
 - Distinguir requisitos confirmados, propuestas y decisiones pendientes. Una propuesta no es una decisión aprobada.
@@ -19,7 +19,9 @@
 - [x] Productos individuales/cajas, precios en centavos GTQ y composición/opciones de caja mixta.
 - [x] Catálogo normalizado de 9 vendibles (4 individuales y 5 cajas compuestas), con componentes configurables y seed no destructivo; la fila demo legacy `mixta` queda inactiva.
 - [x] Pruebas backend y frontend, typecheck, build y recorrido visual desktop/móvil verificados; evidencia en `docs/VERIFICACION_INICIAL.md`.
-- [ ] Login, pedidos/checkout, POS, puntos, Wallet, pagos, delivery e integraciones sociales: no implementados en esta entrega.
+- [x] Registro/login/logout de clientes, consulta de sesión, sesiones opacas revocables, contraseñas con scrypt, cookies HttpOnly/SameSite, CORS acotado y protección Origin/CSRF.
+- [ ] Verificación/recuperación por correo y Google: proveedor, credenciales y redirect URI pendientes; la UI no simula estas capacidades.
+- [ ] Pedidos/checkout, POS, puntos, Wallet, pagos, delivery e integraciones sociales: no implementados en esta entrega.
 
 ## 2. Contexto confirmado
 

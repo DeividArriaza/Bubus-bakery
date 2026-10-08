@@ -28,3 +28,13 @@ Se preservan `docs/BubusFigma.pdf`, documentación previa y cambios ajenos. No s
 La primera ronda RED de esta corrección fue real: backend `3 failed, 2 passed` y frontend `2 failed, 1 passed` por el contrato normalizado ausente. Los fallos históricos por `pytest`/`package.json` inexistentes eran errores de entorno y no se presentan como RED de feature. Hubo una regresión de test al endurecer Compose: la imagen cacheada usó la aserción antigua; el test local actualizado pasó al montarse explícitamente.
 
 No hay bloqueo de publicación. No se ejecutó `npm audit fix --force`, no se hizo commit previo de estos avances, ni push remoto todavía al crear este registro.
+
+## Etapa de cuentas
+
+Se añadió migración aditiva `004_auth.sql` sobre el volumen existente: usuarios separados de operadores y sesiones opacas revocables persistidas. Registro siempre crea `customer`; no existe operador predeterminado. `python -m app.bootstrap_operator` requiere una ejecución local explícita y contraseña por prompt o variable del proceso sin imprimirla. Contraseñas usan scrypt de la biblioteca estándar; las cookies son HttpOnly/SameSite y Secure es configurable.
+
+TDD de auth: RED backend real `ImportError: AppSession` con tests nuevos; después un fallo real de contrato español para HTTPException; GREEN final `docker compose run --rm --no-deps -v "$PWD/backend:/app" api pytest -q` → `9 passed, 1 skipped, 1 warning`. Frontend tuvo RED real por selector ambiguo y por tipado del matcher; GREEN final `npm run test:run` → `5 passed`, `npm run typecheck` y `npm run build` correctos.
+
+API real con PostgreSQL: registro `201`, sesión `200`, logout `204`, sesión posterior `401`; una sesión permaneció `200` tras reinicio de API. CSRF/origin sin Origin devuelve `403`; CORS preflight devuelve solo localhost permitido. Google devuelve `503` “aún no está configurado”; el botón está deshabilitado y no simula login. Verificación/recuperación de correo no expone tokens ni promete envío.
+
+Capturas de acceso verificadas con Playwright: `docs/design-review/auth-desktop.jpg`, `auth-mobile.jpg` y sus `.b64` pequeños. Las respuestas `401` esperadas al consultar una sesión anónima aparecen como mensajes de consola del navegador, sin requests fallidas; quedan documentadas como comportamiento de acceso denegado.
