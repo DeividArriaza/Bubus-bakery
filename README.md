@@ -12,7 +12,9 @@ Primera entrega real: landing responsive y catálogo público servido por una AP
 - Migración versionada y seed idempotente.
 - API pública de lectura: `GET /api/health` y `GET /api/catalog`.
 - Registro, login, logout y sesión de cliente con sesiones opacas revocables en PostgreSQL, contraseña con scrypt y cookies HttpOnly SameSite.
-- No incluye pedidos, checkout, POS, puntos ni Wallet. Google y correo de verificación/recuperación quedan diferidos: no hay proveedor ni secretos configurados.
+- Solicitudes web autenticadas para envío de cajas, con subtotal y composición congelados desde backend; la dueña confirma cobertura y total final.
+- Panel de operador para consultar solicitudes y registrar ventas presenciales en efectivo o transferencia con confirmación explícita.
+- No incluye pagos con tarjeta, inventario, reparto, puntos ni Wallet. Google y correo de verificación/recuperación quedan diferidos: no hay proveedor ni secretos configurados.
 
 ## Ejecutar con Docker Compose
 

@@ -1,7 +1,8 @@
 import os
+import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -9,8 +10,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from .auth import SESSION_COOKIE, create_session, current_user, hash_password, normalize_email, public_user, require_origin, revoke_session, verify_password
+from .commerce import calculate_items, now_utc, order_json, sale_json
 from .db import apply_migrations, catalog_data, make_engine, make_session_factory, seed_catalog
-from .models import User
+from .models import Order, OrderItem, Sale, SaleItem, User
 
 
 def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
@@ -121,6 +123,114 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     @app.get("/api/auth/google/start")
     def google_start():
         return auth_error("El acceso con Google aún no está configurado.", 503)
+
+    def require_idempotency(value: str | None) -> str:
+        if not value or not value.strip() or len(value.strip()) > 100:
+            raise HTTPException(status_code=422, detail="La solicitud necesita una clave de reintento válida.")
+        return value.strip()
+
+    def require_operator(request: Request) -> User:
+        user = current_user(request, session_factory)
+        if user.role != "operator":
+            raise HTTPException(status_code=403, detail="No tienes permisos para esta sección.")
+        return user
+
+    @app.post("/api/orders", status_code=201)
+    def create_order(request: Request, payload: dict, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
+        require_origin(request, origins)
+        user = current_user(request, session_factory)
+        key = require_idempotency(idempotency_key)
+        with session_factory() as session:
+            existing = session.scalar(select(Order).where(Order.customer_id == user.id, Order.idempotency_key == key))
+            if existing is not None:
+                return JSONResponse(status_code=200, content=order_json(session, existing))
+            if payload.get("fulfillment") != "envio":
+                raise HTTPException(status_code=422, detail="Por ahora las solicitudes web son únicamente para envío.")
+            payment_intent = payload.get("paymentIntent", "NO_DEFINIDO")
+            if payment_intent not in {"NO_DEFINIDO", "AL_PEDIR", "AL_RECIBIR"}:
+                raise HTTPException(status_code=422, detail="La intención de pago no es válida.")
+            snapshots, subtotal = calculate_items(session, payload.get("items"), delivery_only_boxes=True)
+            contact_reference = payload.get("contactReference")
+            if contact_reference is not None and (not isinstance(contact_reference, str) or len(contact_reference.strip()) > 120):
+                raise HTTPException(status_code=422, detail="La referencia de contacto es demasiado larga.")
+            timestamp = now_utc()
+            order = Order(customer_id=user.id, fulfillment="envio", status="POR_CONFIRMAR", payment_status="PENDIENTE", payment_intent=payment_intent, delivery_status="PENDIENTE", subtotal_cents=subtotal, shipping_amount_cents=None, total_final_cents=None, contact_reference=contact_reference.strip() if isinstance(contact_reference, str) else None, idempotency_key=key, created_at=timestamp, updated_at=timestamp)
+            session.add(order)
+            session.flush()
+            for item in snapshots:
+                product = item["product"]
+                session.add(OrderItem(order_id=order.id, product_id=product.id, product_slug=product.slug, product_name=product.name, unit_price_cents=product.price_cents, quantity=item["quantity"], snapshot_json=json.dumps(item["snapshot"], ensure_ascii=False, sort_keys=True)))
+            session.commit()
+            return JSONResponse(status_code=201, content=order_json(session, order))
+
+    @app.get("/api/orders")
+    def list_customer_orders(request: Request):
+        user = current_user(request, session_factory)
+        with session_factory() as session:
+            orders = session.scalars(select(Order).where(Order.customer_id == user.id).order_by(Order.created_at.desc())).all()
+            return {"orders": [order_json(session, order) for order in orders]}
+
+    @app.get("/api/operator/orders")
+    def list_operator_orders(request: Request):
+        require_operator(request)
+        with session_factory() as session:
+            orders = session.scalars(select(Order).order_by(Order.created_at.desc())).all()
+            return {"orders": [order_json(session, order) for order in orders]}
+
+    @app.patch("/api/operator/orders/{order_id}")
+    def update_order(request: Request, order_id: int, payload: dict):
+        require_origin(request, origins)
+        require_operator(request)
+        status = payload.get("status")
+        if status not in {"POR_CONFIRMAR", "CONFIRMADA", "CANCELADA"}:
+            raise HTTPException(status_code=422, detail="Ese estado de solicitud no es válido.")
+        with session_factory() as session:
+            order = session.get(Order, order_id)
+            if order is None:
+                raise HTTPException(status_code=404, detail="No encontramos esa solicitud.")
+            if order.status == "CANCELADA" and status != "CANCELADA":
+                raise HTTPException(status_code=409, detail="Una solicitud cancelada no se puede reabrir automáticamente.")
+            order.status = status
+            order.updated_at = now_utc()
+            session.commit()
+            return order_json(session, order)
+
+    @app.post("/api/operator/sales", status_code=201)
+    def create_sale(request: Request, payload: dict, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
+        require_origin(request, origins)
+        actor = require_operator(request)
+        key = require_idempotency(idempotency_key)
+        if payload.get("receivedConfirmed") is not True:
+            raise HTTPException(status_code=422, detail="El operador debe confirmar explícitamente la recepción del pago.")
+        method = payload.get("paymentMethod")
+        if method not in {"efectivo", "transferencia", "EFECTIVO", "TRANSFERENCIA"}:
+            raise HTTPException(status_code=422, detail="El medio debe ser efectivo o transferencia.")
+        customer_name = payload.get("customerName")
+        if customer_name is not None and (not isinstance(customer_name, str) or len(customer_name.strip()) > 120):
+            raise HTTPException(status_code=422, detail="El nombre del cliente es demasiado largo.")
+        with session_factory() as session:
+            existing = session.scalar(select(Sale).where(Sale.actor_id == actor.id, Sale.idempotency_key == key))
+            if existing is not None:
+                return JSONResponse(status_code=200, content=sale_json(session, existing))
+            snapshots, subtotal = calculate_items(session, payload.get("items"), delivery_only_boxes=False)
+            customer_id = None
+            customer_email = payload.get("customerEmail")
+            if customer_email:
+                try:
+                    normalized = normalize_email(customer_email)
+                except ValueError as error:
+                    raise HTTPException(status_code=422, detail=str(error)) from error
+                member = session.scalar(select(User).where(User.email == normalized, User.active.is_(True)))
+                customer_id = member.id if member is not None else None
+            timestamp = now_utc()
+            sale = Sale(actor_id=actor.id, customer_id=customer_id, payment_method=method.upper(), payment_status="RECIBIDO", subtotal_cents=subtotal, customer_name=customer_name.strip() if isinstance(customer_name, str) else None, idempotency_key=key, received_confirmed_at=timestamp, created_at=timestamp)
+            session.add(sale)
+            session.flush()
+            for item in snapshots:
+                product = item["product"]
+                session.add(SaleItem(sale_id=sale.id, product_id=product.id, product_slug=product.slug, product_name=product.name, unit_price_cents=product.price_cents, quantity=item["quantity"], snapshot_json=json.dumps(item["snapshot"], ensure_ascii=False, sort_keys=True)))
+            session.commit()
+            return JSONResponse(status_code=201, content=sale_json(session, sale))
 
     @app.exception_handler(Exception)
     async def unexpected_error(_: Request, __: Exception):

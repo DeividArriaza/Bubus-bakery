@@ -2,7 +2,7 @@
 
 ## 1. Estado y autoridad del documento
 
-- Versión: 0.4 — stack, idioma, diseño adaptable y cuentas de cliente confirmados; pedidos y operación siguen fuera de esta etapa.
+- Versión: 0.5 — stack, idioma, diseño adaptable, cuentas, solicitudes web y POS básico confirmados; pagos externos, puntos e inventario siguen fuera.
 - Este documento conserva el contexto de negocio y orienta futuras tareas delegadas. NO autoriza implementar todos los módulos ni tomar decisiones pendientes sin aprobación.
 - Los agentes deben leerlo antes de trabajar y limitarse al encargo concreto recibido.
 - Distinguir requisitos confirmados, propuestas y decisiones pendientes. Una propuesta no es una decisión aprobada.
@@ -20,8 +20,10 @@
 - [x] Catálogo normalizado de 9 vendibles (4 individuales y 5 cajas compuestas), con componentes configurables y seed no destructivo; la fila demo legacy `mixta` queda inactiva.
 - [x] Pruebas backend y frontend, typecheck, build y recorrido visual desktop/móvil verificados; evidencia en `docs/VERIFICACION_INICIAL.md`.
 - [x] Registro/login/logout de clientes, consulta de sesión, sesiones opacas revocables, contraseñas con scrypt, cookies HttpOnly/SameSite, CORS acotado y protección Origin/CSRF.
+- [x] Solicitudes autenticadas para envío de cajas: subtotal backend, snapshot histórico de precio/composición, elección mixta exacta, idempotencia y privacidad por cliente.
+- [x] Panel operador protegido: consulta/gestión de solicitudes y ventas POS de efectivo/transferencia con actor, fecha, importes y confirmación explícita.
 - [ ] Verificación/recuperación por correo y Google: proveedor, credenciales y redirect URI pendientes; la UI no simula estas capacidades.
-- [ ] Pedidos/checkout, POS, puntos, Wallet, pagos, delivery e integraciones sociales: no implementados en esta entrega.
+- [ ] Tarjeta, cobro automático, cobertura/coste/logística de entrega, devoluciones, inventario, puntos, Wallet e integraciones sociales: no implementados.
 
 ## 2. Contexto confirmado
 

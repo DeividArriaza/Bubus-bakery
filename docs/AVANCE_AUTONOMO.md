@@ -38,3 +38,13 @@ TDD de auth: RED backend real `ImportError: AppSession` con tests nuevos; despu�
 API real con PostgreSQL: registro `201`, sesión `200`, logout `204`, sesión posterior `401`; una sesión permaneció `200` tras reinicio de API. CSRF/origin sin Origin devuelve `403`; CORS preflight devuelve solo localhost permitido. Google devuelve `503` “aún no está configurado”; el botón está deshabilitado y no simula login. Verificación/recuperación de correo no expone tokens ni promete envío.
 
 Capturas de acceso verificadas con Playwright: `docs/design-review/auth-desktop.jpg`, `auth-mobile.jpg` y sus `.b64` pequeños. Las respuestas `401` esperadas al consultar una sesión anónima aparecen como mensajes de consola del navegador, sin requests fallidas; quedan documentadas como comportamiento de acceso denegado.
+
+## Solicitudes web y POS
+
+Se añadió la migración aditiva `005_orders_sales.sql` y `006_order_payment_intent.sql`, sin borrar el volumen ni tocar catálogo/auth. Las solicitudes autenticadas aceptan solo cajas para `envio`, calculan subtotal desde el catálogo backend, congelan precio/nombre/composición/opciones por línea, dejan `shippingAmountCents` y `totalFinalCents` en `null`, y nacen `POR_CONFIRMAR` con pago/entrega separados. La intención `AL_PEDIR`/`AL_RECIBIR` no cobra.
+
+El panel operador exige rol `operator`, lista y cambia solicitudes entre `POR_CONFIRMAR`, `CONFIRMADA` y `CANCELADA` (no reabre canceladas), y registra ventas presenciales con `EFECTIVO` o `TRANSFERENCIA`, actor, fecha, importes, líneas snapshot y confirmación explícita. No hay tarjeta, devolución, inventario, reparto, banco, puntos ni Wallet. No existe operador predeterminado; el smoke usó `bootstrap_operator` con secreto efímero y limpió solo sus fixtures.
+
+TDD real: tests nuevos RED por import faltante; después RED de resolución de opciones y mensaje de validación; GREEN backend `14 passed, 1 skipped, 1 warning`, frontend `5 passed`, typecheck/build correctos. Test Compose actualizado: `1 passed`. Flujo API real cliente→solicitud `201`→operador consulta `200`/confirma `200`→venta `201` y reintento idempotente `200`; precios enviados adulterados fueron ignorados.
+
+Browser end-to-end real desktop/móvil: cliente creó solicitud visible al operador; operador confirmó y registró venta. Capturas: `docs/design-review/orders-mobile.jpg`/`.b64` y `pos-desktop.jpg`/`.b64`. Sin requests fallidas ni errores de consola no esperados. Los estados, cobertura, costo y total final quedan honestamente pendientes de confirmación de la dueña.
