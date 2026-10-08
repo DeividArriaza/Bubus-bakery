@@ -1,0 +1,20 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Local review evidence generated from screenshots
+docs/design-review/*.b64
+docs/design-review/*.jpg
+
+# Temporary local files
+.codex-write-test-*

@@ -1,0 +1,77 @@
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.db import create_test_session, init_test_database, seed_catalog
+from app.main import create_app
+from app.models import Component, Product
+
+
+def client_with_catalog():
+    session_factory, engine = create_test_session()
+    init_test_database(engine)
+    seed_catalog(session_factory)
+    return TestClient(create_app(session_factory))
+
+
+def test_health_reports_api_ready():
+    response = client_with_catalog().get("/api/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "servicio": "api"}
+
+
+def test_catalog_has_nine_sellable_prices_and_compositions():
+    response = client_with_catalog().get("/api/catalog")
+    assert response.status_code == 200
+    products = {product["slug"]: product for product in response.json()["products"]}
+
+    assert len(products) == 9
+    assert {slug: products[slug]["priceCents"] for slug in products} == {
+        "simple": 1000, "simple-caja-6": 6000,
+        "m-and-m": 1500, "m-and-m-caja-6": 7500,
+        "snickers": 1700, "snickers-caja-6": 8000,
+        "almendra": 1500, "almendra-caja-6": 7000,
+        "mixta-caja-6": 8500,
+    }
+    assert products["simple-caja-6"]["composition"] == [{"product": "simple", "quantity": 6}]
+    assert products["m-and-m-caja-6"]["composition"] == [{"product": "m-and-m", "quantity": 6}]
+    assert products["snickers-caja-6"]["composition"] == [{"product": "snickers", "quantity": 6}]
+    assert products["almendra-caja-6"]["composition"] == [{"product": "almendra", "quantity": 6}]
+    mixture = products["mixta-caja-6"]
+    assert mixture["composition"] == [{"product": "snickers", "quantity": 2}, {"product": "m-and-m", "quantity": 3}]
+    assert mixture["optionGroups"] == [{
+        "code": "sixth-brownie", "label": "Elige el sexto brownie", "minSelections": 1, "maxSelections": 1,
+        "options": [{"product": "almendra", "quantity": 1}, {"product": "simple", "quantity": 1}],
+    }]
+
+
+def test_seed_inserts_missing_without_overwriting_catalog_changes():
+    session_factory, engine = create_test_session()
+    init_test_database(engine)
+    seed_catalog(session_factory)
+    with session_factory() as session:
+        simple = session.scalar(select(Product).where(Product.slug == "simple"))
+        box = session.scalar(select(Product).where(Product.slug == "simple-caja-6"))
+        component = session.scalar(select(Component).where(Component.parent_id == box.id))
+        simple.name = "Nombre editado por la dueña"
+        simple.price_cents = 1111
+        component.quantity = 4
+        session.commit()
+    seed_catalog(session_factory)
+    with session_factory() as session:
+        simple = session.scalar(select(Product).where(Product.slug == "simple"))
+        box = session.scalar(select(Product).where(Product.slug == "simple-caja-6"))
+        component = session.scalar(select(Component).where(Component.parent_id == box.id))
+        assert simple.name == "Nombre editado por la dueña"
+        assert simple.price_cents == 1111
+        assert component.quantity == 4
+    assert len(client_with_catalog().get("/api/catalog").json()["products"]) == 9
+
+
+def test_catalog_database_error_is_spanish():
+    def broken_session():
+        raise SQLAlchemyError("fallo controlado")
+
+    response = TestClient(create_app(broken_session)).get("/api/catalog")
+    assert response.status_code == 503
+    assert response.json() == {"error": "No pudimos cargar el catálogo en este momento."}
