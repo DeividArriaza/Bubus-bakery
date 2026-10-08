@@ -76,3 +76,9 @@ La segunda revisión externa independiente sobre `f9dd024` reportó cuatro halla
 - UI: selección de opción válida por producto y operación incierta con payload congelado, doble submit bloqueado, reintento/recuperación explícitos y nueva operación explícita.
 
 Evidencia: backend `26 passed, 5 skipped`; PostgreSQL aislado `4 passed`; frontend `11 passed`, typecheck/build correctos; npm audit `0`; pip-audit aislado `No known vulnerabilities found`; Compose tres servicios healthy; capturas `docs/design-review/ux-ciclo-dos-1440.jpg(.b64)` y `ux-ciclo-dos-390.jpg(.b64)`. Padre aún debe aceptar.
+
+## Estado posterior a revisión FINAL EXTERNA — pausado
+
+La segunda revisión FINAL EXTERNA no aprobó `5265f6b`. El estado vigente es **NO_APROBADO_PARA_VENTAS_REALES** y el alcance es `development-demo`. El presupuesto de dos ciclos está agotado: no se corrige código ni se inicia un tercer ciclo en esta pausa. Los cinco hallazgos concretos, su reproducción y los tests faltantes están en [`ESTADO_PENDIENTE.md`](ESTADO_PENDIENTE.md).
+
+Los resultados históricos (`backend 26/5`, PostgreSQL `4`, frontend `11`, typecheck/build y auditorías) se conservan, pero no cubren doble submit antes del render, intención de venta independiente de membresía, whitelist exacta de unique constraints, congelación visible del payload ni validación estricta de tipos/opciones. No se afirma ausencia total de vulnerabilidades de seguridad.

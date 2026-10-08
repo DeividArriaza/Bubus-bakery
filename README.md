@@ -1,5 +1,7 @@
 # Bubu's bakery
 
+> Estado vigente: **NO_APROBADO_PARA_VENTAS_REALES**. Esta rama contiene un demo de desarrollo pendiente de correcciones externas documentadas en [`docs/ESTADO_PENDIENTE.md`](docs/ESTADO_PENDIENTE.md). No usar con ventas reales.
+
 Primera entrega real: landing responsive y catálogo público servido por una API FastAPI con PostgreSQL. La interfaz y los mensajes visibles están en español.
 
 ## Alcance de esta entrega
@@ -63,3 +65,5 @@ Backend: usar Python 3.12 o 3.13 en un entorno virtual y `backend/requirements.l
 Los comandos, resultados, capturas y limitaciones de la primera verificación se conservan en [`docs/VERIFICACION_INICIAL.md`](docs/VERIFICACION_INICIAL.md).
 
 Contexto y reglas: [`AGENTS.md`](AGENTS.md), [`docs/PLAN_DE_ACCION.md`](docs/PLAN_DE_ACCION.md) y [`skills/git-multiple-accounts/SKILL.md`](skills/git-multiple-accounts/SKILL.md).
+
+Estado y pendientes de aceptación: [`docs/ESTADO_PENDIENTE.md`](docs/ESTADO_PENDIENTE.md). Los resultados históricos de pruebas se conservan; pasar las suites no equivale a aprobación de producción.

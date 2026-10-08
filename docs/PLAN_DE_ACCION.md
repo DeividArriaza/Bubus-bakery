@@ -376,3 +376,7 @@ Priorizar estas preguntas antes de seleccionar tecnologías o activar fidelizaci
 [1] [Google Wallet — Loyalty cards](https://developers.google.com/wallet/retail/loyalty-cards)
 [2] [Apple Wallet](https://developer.apple.com/wallet)
 [3] [Google Identity Services — Overview](https://developers.google.com/identity/gsi/web/guides/overview)
+
+## Estado vigente de la entrega publicada
+
+La entrega publicada en `feat/base-catalogo` está pausada con estado **NO_APROBADO_PARA_VENTAS_REALES** y alcance `development-demo`, tras la segunda revisión FINAL EXTERNA de `5265f6b`. Los resultados históricos no se borran ni se reinterpretan como aprobación. Los hallazgos y pruebas pendientes están documentados en [`docs/ESTADO_PENDIENTE.md`](ESTADO_PENDIENTE.md); no iniciar otro ciclo sin una autorización nueva.
