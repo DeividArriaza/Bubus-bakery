@@ -4,7 +4,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import create_test_session, init_test_database, seed_catalog
 from app.main import create_app
-from app.models import Component, Product
+from app.models import Component, Option, Product
 
 
 def client_with_catalog():
@@ -91,3 +91,52 @@ def test_active_catalog_compositions_are_acyclic_and_prices_are_product_owned():
         for product_id in products:
             visit(product_id, set())
         assert all(product.price_cents >= 0 for product in products.values())
+
+
+def test_inactive_options_are_hidden_and_cannot_be_selected():
+    session_factory, engine = create_test_session()
+    init_test_database(engine)
+    seed_catalog(session_factory)
+    with session_factory() as session:
+        almond = session.scalar(select(Product).where(Product.slug == "almendra"))
+        almond.active = False
+        session.commit()
+    client = TestClient(create_app(session_factory))
+    catalog = {item["slug"]: item for item in client.get("/api/catalog").json()["products"]}
+    assert catalog["mixta-caja-6"]["optionGroups"][0]["options"] == [{"product": "simple", "quantity": 1}]
+
+    from app.tests_helpers import authenticated_customer
+
+    token = authenticated_customer(session_factory, "inactiva@example.com")
+    response = client.post(
+        "/api/orders",
+        json={"fulfillment": "envio", "items": [{"slug": "mixta-caja-6", "quantity": 1, "options": {"sixth-brownie": "almendra"}}]},
+        headers={"Origin": "http://localhost:5173", "Cookie": f"bubus_session={token}", "Idempotency-Key": "inactive-option"},
+    )
+    assert response.status_code == 422
+    assert "válida" in response.json()["error"]
+
+
+def test_inactive_component_and_cycle_make_parent_not_sellable_without_placeholder():
+    session_factory, engine = create_test_session()
+    init_test_database(engine)
+    seed_catalog(session_factory)
+    with session_factory() as session:
+        child = session.scalar(select(Product).where(Product.slug == "simple"))
+        parent = session.scalar(select(Product).where(Product.slug == "simple-caja-6"))
+        child.active = False
+        session.commit()
+    client = TestClient(create_app(session_factory))
+    catalog = {item["slug"]: item for item in client.get("/api/catalog").json()["products"]}
+    assert "simple-caja-6" not in catalog
+
+    with session_factory() as session:
+        child = session.scalar(select(Product).where(Product.slug == "simple"))
+        child.active = True
+        parent = session.scalar(select(Product).where(Product.slug == "simple-caja-6"))
+        component = session.scalar(select(Component).where(Component.parent_id == parent.id))
+        component.child_id = parent.id
+        session.commit()
+    catalog_response = client.get("/api/catalog")
+    assert catalog_response.status_code == 200
+    assert "simple-caja-6" not in {item["slug"] for item in catalog_response.json()["products"]}

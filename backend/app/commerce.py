@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import datetime, timezone
 
@@ -29,7 +30,13 @@ def _selected_options(session: Session, product: Product, raw_options: object, p
         choice = raw_options.get(group.code)
         if group.min_selections == 1 and group.max_selections == 1 and not isinstance(choice, str):
             raise _error(f"Debes hacer una elección para {group.label.lower()}.")
-        allowed = {option.product_id: option for option in session.scalars(select(Option).where(Option.group_id == group.id))}
+        allowed = {
+            option.product_id: option
+            for option in session.scalars(select(Option).where(Option.group_id == group.id))
+            if option.product_id in product_slugs
+        }
+        if group.min_selections and not allowed:
+            raise _error(f"No hay opciones disponibles para {group.label.lower()}.")
         product_id = next((pid for pid, slug in product_slugs.items() if slug == choice), None)
         option = allowed.get(product_id)
         if option is None:
@@ -38,13 +45,51 @@ def _selected_options(session: Session, product: Product, raw_options: object, p
     return selected
 
 
+def sellable_product_ids(session: Session) -> tuple[dict[int, Product], set[int]]:
+    all_products = {product.id: product for product in session.scalars(select(Product))}
+    components = {}
+    for component in session.scalars(select(Component).order_by(Component.id)):
+        components.setdefault(component.parent_id, []).append(component)
+    groups = {}
+    for group in session.scalars(select(OptionGroup).order_by(OptionGroup.id)):
+        groups.setdefault(group.product_id, []).append(group)
+    options = {}
+    for option in session.scalars(select(Option).order_by(Option.id)):
+        options.setdefault(option.group_id, []).append(option)
+    memo: dict[int, bool] = {}
+
+    def valid(product_id: int, path: set[int]) -> bool:
+        if product_id in memo:
+            return memo[product_id]
+        product = all_products.get(product_id)
+        if product is None or not product.active or product_id in path:
+            memo[product_id] = False
+            return False
+        next_path = path | {product_id}
+        for component in components.get(product_id, []):
+            if component.quantity < 1 or not valid(component.child_id, next_path):
+                memo[product_id] = False
+                return False
+        for group in groups.get(product_id, []):
+            active_options = [option for option in options.get(group.id, []) if valid(option.product_id, next_path)]
+            if len(active_options) < group.min_selections or group.max_selections < group.min_selections:
+                memo[product_id] = False
+                return False
+        memo[product_id] = True
+        return True
+
+    for product_id in all_products:
+        valid(product_id, set())
+    return all_products, {product_id for product_id, is_valid in memo.items() if is_valid}
+
+
 def calculate_items(session: Session, raw_items: object, *, delivery_only_boxes: bool) -> tuple[list[dict], int]:
     if not isinstance(raw_items, list) or not raw_items or len(raw_items) > MAX_LINES:
         raise _error(f"Incluye entre 1 y {MAX_LINES} productos.")
     slugs = [item.get("slug") if isinstance(item, dict) else None for item in raw_items]
-    all_products = list(session.scalars(select(Product).where(Product.active.is_(True))))
-    products = {product.slug: product for product in all_products if product.slug in slugs}
-    product_ids = {product.id: product.slug for product in all_products}
+    all_by_id, sellable_ids = sellable_product_ids(session)
+    products = {product.slug: product for product in all_by_id.values() if product.id in sellable_ids and product.slug in slugs}
+    product_ids = {product.id: product.slug for product in all_by_id.values() if product.id in sellable_ids}
     snapshots: list[dict] = []
     subtotal = 0
     for raw in raw_items:
@@ -57,7 +102,9 @@ def calculate_items(session: Session, raw_items: object, *, delivery_only_boxes:
         if delivery_only_boxes and product.presentation != "caja6":
             raise _error("Las solicitudes para envío solo admiten cajas de 6.")
         components = list(session.scalars(select(Component).where(Component.parent_id == product.id).order_by(Component.id)))
-        composition = [{"product": product_ids.get(component.child_id, "producto"), "quantity": component.quantity} for component in components]
+        if any(component.child_id not in product_ids for component in components):
+            raise _error("La composición de este producto ya no está disponible.")
+        composition = [{"product": product_ids[component.child_id], "quantity": component.quantity} for component in components]
         selected = _selected_options(session, product, raw.get("options"), product_ids)
         if not components and product.presentation == "caja6":
             raise _error("La composición de esta caja no está disponible.")
@@ -65,6 +112,32 @@ def calculate_items(session: Session, raw_items: object, *, delivery_only_boxes:
         snapshots.append({"product": product, "quantity": quantity, "snapshot": snapshot, "lineTotalCents": product.price_cents * quantity})
         subtotal += product.price_cents * quantity
     return snapshots, subtotal
+
+
+def payload_fingerprint(payload: dict) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def order_fingerprint_data(order: Order, items: list[OrderItem]) -> dict:
+    return {
+        "fulfillment": order.fulfillment,
+        "paymentIntent": order.payment_intent,
+        "contactReference": order.contact_reference,
+        "subtotalCents": order.subtotal_cents,
+        "items": [{"slug": item.product_slug, "quantity": item.quantity, "snapshot": json.loads(item.snapshot_json)} for item in items],
+    }
+
+
+def sale_fingerprint_data(sale: Sale, items: list[SaleItem]) -> dict:
+    return {
+        "paymentMethod": sale.payment_method,
+        "customerId": sale.customer_id,
+        "customerName": sale.customer_name,
+        "reference": sale.reference,
+        "subtotalCents": sale.subtotal_cents,
+        "items": [{"slug": item.product_slug, "quantity": item.quantity, "snapshot": json.loads(item.snapshot_json)} for item in items],
+    }
 
 
 def now_utc() -> datetime:

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.auth import create_session, hash_password
 from app.db import create_test_session, init_test_database, seed_catalog
 from app.main import create_app
-from app.models import AppSession, Order, Sale, User
+from app.models import AppSession, Component, Order, Product, Sale, User
 
 ORIGIN = "http://localhost:5173"
 
@@ -68,6 +68,42 @@ def test_order_rejects_individual_delivery_invalid_mix_and_price_tampering():
     assert bad_quantity.status_code == 422
 
 
+def test_order_and_sale_reject_inactive_components_cycles_and_inactive_options():
+    client, factory = setup_clients()
+    customer = create_user(factory, "invalid-structure-customer@example.com")
+    operator = create_user(factory, "invalid-structure-operator@example.com", "operator")
+    with factory() as session:
+        simple = session.scalar(select(Product).where(Product.slug == "simple"))
+        box = session.scalar(select(Product).where(Product.slug == "simple-caja-6"))
+        almond = session.scalar(select(Product).where(Product.slug == "almendra"))
+        almond.active = False
+        session.commit()
+    mixed = {"slug": "mixta-caja-6", "quantity": 1, "options": {"sixth-brownie": "almendra"}}
+    order = client.post("/api/orders", json={"fulfillment": "envio", "items": [mixed]}, headers=auth_headers(customer, "inactive-option-order"))
+    sale = client.post("/api/operator/sales", json={"items": [mixed], "paymentMethod": "efectivo", "receivedConfirmed": True}, headers=auth_headers(operator, "inactive-option-sale"))
+    assert order.status_code == 422 and sale.status_code == 422
+    with factory() as session:
+        almond = session.scalar(select(Product).where(Product.slug == "almendra"))
+        almond.active = True
+        simple = session.scalar(select(Product).where(Product.slug == "simple"))
+        simple.active = False
+        session.commit()
+    for endpoint, body, headers in [
+        ("/api/orders", {"fulfillment": "envio", "items": [{"slug": "simple-caja-6", "quantity": 1}]}, auth_headers(customer, "inactive-component-order")),
+        ("/api/operator/sales", {"items": [{"slug": "simple-caja-6", "quantity": 1}], "paymentMethod": "efectivo", "receivedConfirmed": True}, auth_headers(operator, "inactive-component-sale")),
+    ]:
+        assert client.post(endpoint, json=body, headers=headers).status_code == 422
+    with factory() as session:
+        simple = session.scalar(select(Product).where(Product.slug == "simple"))
+        simple.active = True
+        box = session.scalar(select(Product).where(Product.slug == "simple-caja-6"))
+        component = session.scalar(select(Component).where(Component.parent_id == box.id))
+        component.child_id = box.id
+        session.commit()
+    assert client.post("/api/orders", json={"fulfillment": "envio", "items": [{"slug": "simple-caja-6", "quantity": 1}]}, headers=auth_headers(customer, "cycle-order")).status_code == 422
+    assert client.post("/api/operator/sales", json={"items": [{"slug": "simple-caja-6", "quantity": 1}], "paymentMethod": "efectivo", "receivedConfirmed": True}, headers=auth_headers(operator, "cycle-sale")).status_code == 422
+
+
 def test_order_idempotency_does_not_duplicate_and_statuses_are_separate():
     client, factory = setup_clients()
     token = create_user(factory, "idempotent@example.com")
@@ -79,6 +115,17 @@ def test_order_idempotency_does_not_duplicate_and_statuses_are_separate():
     assert again.json()["paymentStatus"] == "PENDIENTE" and again.json()["deliveryStatus"] == "PENDIENTE"
     with factory() as session:
         assert len(session.scalars(select(Order)).all()) == 1
+
+
+def test_order_idempotency_key_with_different_logical_payload_is_conflict():
+    client, factory = setup_clients()
+    token = create_user(factory, "fingerprint@example.com")
+    headers = auth_headers(token, "same-logical-key")
+    first = client.post("/api/orders", json={"fulfillment": "envio", "items": [{"slug": "simple-caja-6", "quantity": 1}]}, headers=headers)
+    different = client.post("/api/orders", json={"fulfillment": "envio", "items": [{"slug": "m-and-m-caja-6", "quantity": 1}]}, headers=headers)
+    assert first.status_code == 201
+    assert different.status_code == 409
+    assert "reintento" in different.json()["error"].lower()
 
 
 def test_operator_can_register_cash_sale_and_customer_cannot_or_claim_receipt():
@@ -97,6 +144,17 @@ def test_operator_can_register_cash_sale_and_customer_cannot_or_claim_receipt():
     assert not_confirmed.status_code == 422
     with factory() as session:
         assert len(session.scalars(select(Sale)).all()) == 1
+
+
+def test_sale_idempotency_key_with_different_logical_payload_is_conflict():
+    client, factory = setup_clients()
+    operator = create_user(factory, "sale-fingerprint@example.com", "operator")
+    headers = auth_headers(operator, "same-sale-key")
+    first = client.post("/api/operator/sales", json={"items": [{"slug": "simple", "quantity": 1}], "paymentMethod": "efectivo", "receivedConfirmed": True}, headers=headers)
+    different = client.post("/api/operator/sales", json={"items": [{"slug": "m-and-m", "quantity": 1}], "paymentMethod": "efectivo", "receivedConfirmed": True}, headers=headers)
+    assert first.status_code == 201
+    assert different.status_code == 409
+    assert "reintento" in different.json()["error"].lower()
 
 
 def test_operator_can_view_and_update_order_but_customer_cannot():

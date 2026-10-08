@@ -1,0 +1,10 @@
+{
+  "stage": "integridad-concurrencia",
+  "complete": true,
+  "tests_passed": true,
+  "branch": "feat/base-catalogo",
+  "base_sha_reviewed": "90a1f0fa90d1b124ebdeec2050acad2977e7af05",
+  "red": "3 failed, 11 passed: seed options, inactive relations, idempotency payload conflict",
+  "green": "backend 21 passed/4 skipped; PostgreSQL isolated 3 passed; frontend 5 passed; audit Python/npm 0; Compose healthy",
+  "acceptance": "pendiente del ciclo padre"
+}

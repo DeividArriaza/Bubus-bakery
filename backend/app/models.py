@@ -88,6 +88,7 @@ class Order(Base):
     idempotency_key: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payload_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     __table_args__ = (UniqueConstraint("customer_id", "idempotency_key"),)
 
 
@@ -116,6 +117,7 @@ class Sale(Base):
     idempotency_key: Mapped[str] = mapped_column(String(100))
     received_confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payload_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     __table_args__ = (UniqueConstraint("actor_id", "idempotency_key"),)
 
 

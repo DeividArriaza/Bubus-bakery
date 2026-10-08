@@ -58,19 +58,26 @@ def _ensure_product(session: Session, values: dict) -> tuple[Product, bool]:
 
 
 def _add_components_if_empty(session: Session, parent: Product, components: list[tuple[Product, int]]) -> None:
-    existing = session.scalar(select(Component.id).where(Component.parent_id == parent.id))
-    if existing is None:
-        session.add_all([Component(parent_id=parent.id, child_id=child.id, quantity=quantity) for child, quantity in components])
+    existing_child_ids = set(session.scalars(select(Component.child_id).where(Component.parent_id == parent.id)))
+    session.add_all([
+        Component(parent_id=parent.id, child_id=child.id, quantity=quantity)
+        for child, quantity in components
+        if child.id not in existing_child_ids
+    ])
 
 
 def _add_mixed_options_if_missing(session: Session, parent: Product, almond: Product, simple: Product) -> None:
     group = session.scalar(select(OptionGroup).where(OptionGroup.product_id == parent.id, OptionGroup.code == "sixth-brownie"))
-    if group is not None:
-        return
-    group = OptionGroup(product_id=parent.id, code="sixth-brownie", label="Elige el sexto brownie", min_selections=1, max_selections=1)
-    session.add(group)
-    session.flush()
-    session.add_all([Option(group_id=group.id, product_id=almond.id, quantity=1), Option(group_id=group.id, product_id=simple.id, quantity=1)])
+    if group is None:
+        group = OptionGroup(product_id=parent.id, code="sixth-brownie", label="Elige el sexto brownie", min_selections=1, max_selections=1)
+        session.add(group)
+        session.flush()
+    existing_product_ids = set(session.scalars(select(Option.product_id).where(Option.group_id == group.id)))
+    session.add_all([
+        Option(group_id=group.id, product_id=product.id, quantity=1)
+        for product in (almond, simple)
+        if product.id not in existing_product_ids
+    ])
 
 
 def seed_catalog(session_factory: Callable[[], Session]) -> None:
@@ -87,31 +94,32 @@ def seed_catalog(session_factory: Callable[[], Session]) -> None:
     ]
     with session_factory() as session:
         products: dict[str, Product] = {}
-        created: dict[str, bool] = {}
         for slug, name, kind, description, price_cents, presentation in seed:
-            products[slug], created[slug] = _ensure_product(session, {
+            products[slug], _ = _ensure_product(session, {
                 "slug": slug, "name": name, "kind": kind, "description": description,
                 "price_cents": price_cents, "category": "brownie", "presentation": presentation, "active": True,
             })
         for slug, child_slug in [("simple-caja-6", "simple"), ("m-and-m-caja-6", "m-and-m"), ("snickers-caja-6", "snickers"), ("almendra-caja-6", "almendra")]:
             _add_components_if_empty(session, products[slug], [(products[child_slug], 6)])
         _add_components_if_empty(session, products["mixta-caja-6"], [(products["snickers"], 2), (products["m-and-m"], 3)])
-        if created["mixta-caja-6"]:
-            _add_mixed_options_if_missing(session, products["mixta-caja-6"], products["almendra"], products["simple"])
+        _add_mixed_options_if_missing(session, products["mixta-caja-6"], products["almendra"], products["simple"])
         session.commit()
 
 
 def catalog_data(session_factory: Callable[[], Session]) -> list[dict]:
+    from .commerce import sellable_product_ids
+
     with session_factory() as session:
-        products = list(session.scalars(select(Product).where(Product.active.is_(True)).order_by(Product.id)))
-        names = {product.id: product.slug for product in products}
+        all_products, sellable_ids = sellable_product_ids(session)
+        products = [product for product in all_products.values() if product.id in sellable_ids]
+        names = {product.id: product.slug for product in all_products.values()}
         result = []
         for product in products:
             components = session.scalars(select(Component).where(Component.parent_id == product.id).order_by(Component.id))
             groups = session.scalars(select(OptionGroup).where(OptionGroup.product_id == product.id).order_by(OptionGroup.id))
             option_groups = []
             for group in groups:
-                options = session.scalars(select(Option).where(Option.group_id == group.id).order_by(Option.id))
+                options = [option for option in session.scalars(select(Option).where(Option.group_id == group.id).order_by(Option.id)) if option.product_id in sellable_ids]
                 option_groups.append({
                     "code": group.code, "label": group.label, "minSelections": group.min_selections,
                     "maxSelections": group.max_selections,
