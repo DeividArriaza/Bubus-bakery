@@ -1,7 +1,7 @@
 # Instrucciones del repositorio
 
 - Leer [`docs/PLAN_DE_ACCION.md`](docs/PLAN_DE_ACCION.md) y el encargo actual antes de trabajar.
-- Antes de tareas de Git, SSH o publicación, leer [`skills/git-multiple-accounts/SKILL.md`](skills/git-multiple-accounts/SKILL.md).
+
 - Distinguir requisitos confirmados, propuestas y decisiones pendientes.
 - No decidir el stack ni las reglas de puntos sin aprobación; las reglas de puntos esperan el cálculo de costes aprobado.
 - Tratar los pedidos web/app como alcance aprobado de la primera versión propuesta, sin asumir pasarela, integración automática con WhatsApp/Instagram ni puntos por crear un pedido.
