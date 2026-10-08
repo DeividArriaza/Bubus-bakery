@@ -1,0 +1,10 @@
+{
+  "stage": "revision-dependencias",
+  "complete": true,
+  "tests_passed": true,
+  "branch": "feat/base-catalogo",
+  "base_commit": "90a1f0fa90d1b124ebdeec2050acad2977e7af05",
+  "audit_before": "16 avisos reproducidos en Starlette 0.41.3 y pytest 8.3.4",
+  "audit_after": "pip-audit: No known vulnerabilities found; npm audit: 0",
+  "verification": "Compose healthy, backend 16 passed/1 skipped, frontend 5 passed, typecheck/build correctos, PostgreSQL 001..007 y catálogo 9"
+}

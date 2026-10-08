@@ -4,7 +4,7 @@ Fecha: 2026-10-07 · Rama: `feat/base-catalogo`
 
 ## Alcance publicado
 
-Landing responsive y catálogo público en español con React + TypeScript, FastAPI, PostgreSQL y Docker Compose. El diseño adapta la referencia Figma y usa sus imágenes extraídas cuando fue viable. Catálogo normalizado: 9 vendibles activos (4 individuales y 5 cajas de 6), precios GTQ en centavos, cajas compuestas, composición de mixta y opción Almendra/Simple. No se añadieron login, pedidos, POS, puntos, Wallet, pagos ni integraciones sociales.
+Landing responsive y catálogo público en español con React + TypeScript, FastAPI, PostgreSQL y Docker Compose. El diseño adapta la referencia Figma y usa sus imágenes extraídas cuando fue viable. Catálogo normalizado: 9 vendibles activos (4 individuales y 5 cajas de 6), precios GTQ en centavos, cajas compuestas, composición de mixta y opción Almendra/Simple. En esta etapa inicial todavía no se añadían login, pedidos, POS, puntos, Wallet, pagos ni integraciones sociales; las etapas posteriores implementaron cuentas, solicitudes web y POS básico, manteniendo diferidos puntos, Wallet y pagos con tarjeta.
 
 Se preservan `docs/BubusFigma.pdf`, documentación previa y cambios ajenos. No se borró el volumen PostgreSQL. La migración es aditiva y el seed no sobrescribe nombres, precios, componentes u opciones existentes.
 
@@ -16,7 +16,7 @@ Se preservan `docs/BubusFigma.pdf`, documentación previa y cambios ajenos. No s
 - Test Compose actualizado montado desde el árbol local → `1 passed`.
 - En `frontend/`: `npm run test:run` → `3 passed`; `npm run typecheck` → correcto; `npm run build` → correcto.
 - `npm audit --audit-level=moderate` en `frontend/` → `found 0 vulnerabilities`.
-- `pip-audit` no disponible; no se instaló globalmente. `docker compose exec -T api pip check` → `No broken requirements found`.
+- La auditoría Python inicial se ejecutó en una venv temporal fuera del repo; tras actualizar el lock, `pip-audit -r backend/requirements.lock.txt` → `No known vulnerabilities found`. `docker compose exec -T api pip check` → `No broken requirements found`.
 - API → health correcto y catálogo `9 = 4 individuales + 5 cajas`.
 - Playwright desktop 1440×1100 y móvil 390×844 → filtro de cajas deja 5, opción mixta visible, consola/network sin errores.
 - `docker compose config --quiet` → correcto. Con entorno vacío y `.env` deshabilitado → rechazo claro por variable requerida ausente.
@@ -53,6 +53,6 @@ Browser end-to-end real desktop/móvil: cliente creó solicitud visible al opera
 
 No fue una revisión hecha por otro modelo/agente. Se inspeccionaron auth, Origin/CSRF, CORS, roles, sesiones revocables, snapshots de precio/composición, privacidad, idempotencia, auditoría POS, ciclos del catálogo, secretos ignorados, Compose, DB privada y healthchecks. Se corrigió un fallo concreto de CORS: PATCH y `Idempotency-Key` no estaban declarados; ahora el preflight está cubierto por `test_cors_allows_authenticated_patch_and_idempotency_header_only_from_dev_origin`. Se añadió referencia interna no sensible de venta mediante migración 007 y foco visible en UI.
 
-Resultados reproducibles finales: `docker compose build && docker compose up -d` sin `-v`; migraciones `001..007`; `docker compose exec -T api pytest -q` → `16 passed, 1 skipped, 1 warning`; Compose test → `1 passed`; `cd frontend && npm run test:run` → `5 passed`; `npm run typecheck`/`npm run build` correctos; `npm audit --audit-level=moderate` → `found 0 vulnerabilities`; `pip-audit` no disponible y `pip check` limpio. Servicios locales: `http://localhost:5173`, `http://localhost:8000/api/health`; DB sin puerto host.
+Resultados reproducibles finales: `docker compose build && docker compose up -d` sin `-v`; migraciones `001..007`; `docker compose exec -T api pytest -q` → `16 passed, 1 skipped, 2 warnings`; Compose test → `1 passed`; `cd frontend && npm run test:run` → `5 passed`; `npm run typecheck`/`npm run build` correctos; `npm audit --audit-level=moderate` → `found 0 vulnerabilities`; `pip-audit -r backend/requirements.lock.txt` → `No known vulnerabilities found`; `pip check` limpio. Servicios locales: `http://localhost:5173`, `http://localhost:8000/api/health`; DB sin puerto host.
 
 Implementado y verificado: catálogo compuesto acíclico en datos actuales, auth cliente/operador, solicitudes solo cajas para envío, subtotal y snapshots backend, estados separados, POS efectivo/transferencia, idempotencia, historial de actor/fecha/método/importes/referencia, UI española responsive y flujo browser desktop/móvil. Diferido: Google sin configuración, verificación/recuperación email sin proveedor, puntos sujetos a costes/reglas, Wallet, modalidad app nativa/PWA, tarjetas, inventario, banco, reparto, cobertura/coste/envío final, devoluciones y claim de producción.

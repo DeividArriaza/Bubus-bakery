@@ -45,7 +45,8 @@ Las pruebas cubren nueve productos, precios GTQ en centavos, componentes de las 
 
 - Antes de actualizar dependencias: npm audit --audit-level=moderate → 6 vulnerabilidades (2 críticas, 1 alta, 3 moderadas), asociadas al árbol antiguo Vite/Vitest/esbuild.
 - Tras actualizar versiones compatibles fijadas de Vite/Vitest/plugin React: npm audit --audit-level=moderate → found 0 vulnerabilities. No se ejecutó npm audit fix --force.
-- pip-audit no está disponible en la imagen/entorno; no se instaló globalmente. docker compose exec -T api pip check → No broken requirements found. Esto no sustituye una auditoría CVE completa de Python.
+- La auditoría inicial de Python se reprodujo en una venv temporal fuera del repo con `pip-audit --no-deps -r /tmp/bubus-before-audit.txt` → 16 avisos: Starlette 0.41.3 (correcciones hasta 1.3.1) y pytest 8.3.4 (PYSEC-2026-1845, corrección 9.0.3). Tras actualizar el lock fijado, `pip-audit -r backend/requirements.lock.txt` → `No known vulnerabilities found`.
+- `docker compose exec -T api pip check` → `No broken requirements found`; se registra como consistencia de instalación, no como sustituto del audit CVE.
 
 ## Navegador, capturas y límites
 
@@ -63,7 +64,9 @@ Se extrajeron dos fotos reales embebidas del PDF a frontend/public/assets/. No s
 
 La revisión final fue independiente dentro del mismo agente, no por un modelo reviewer distinto. Se verificaron auth/CSRF/CORS/roles/sesiones, ciclos del catálogo, precios y snapshots históricos, privacidad/idempotencia de solicitudes, auditoría POS, secretos, Docker/DB privada/localhost/healthchecks, foco y etiquetas móviles. Hallazgos corregidos: CORS ahora declara PATCH e Idempotency-Key; ventas guardan referencia interna no sensible mediante migración 007; UI tiene foco visible.
 
-Comandos finales: `docker compose build && docker compose up -d` sin `-v`; migraciones PostgreSQL 001–007; `docker compose exec -T api pytest -q` → 16 passed, 1 skipped, 1 warning; `docker compose run --rm --no-deps -v "$PWD:/workspace" -e REPO_ROOT=/workspace api pytest -q /workspace/backend/tests/test_compose_config.py` → 1 passed; en `frontend/`, test 5 passed, typecheck/build correctos, `npm audit --audit-level=moderate` → 0 vulnerabilidades; pip-audit no disponible, pip check limpio.
+La revisión de dependencias está documentada en `docs/REVISION_DEPENDENCIAS.md`: se actualizaron FastAPI/Starlette, pytest, uvicorn, SQLAlchemy y psycopg con resolver real; no se usó `pip-audit --ignore-vulns`, `npm audit fix --force` ni se hizo claim de producción.
+
+Comandos finales: `docker compose build && docker compose up -d` sin `-v`; migraciones PostgreSQL 001–007; `docker compose exec -T api pytest -q` → 16 passed, 1 skipped, 2 warnings; `docker compose exec -T api pip check` → limpio; en `frontend/`, test 5 passed, typecheck/build correctos, `npm audit --audit-level=moderate` → 0 vulnerabilidades; `pip-audit -r backend/requirements.lock.txt` → 0 vulnerabilidades conocidas.
 
 La smoke browser real cubrió cliente crea solicitud → operador consulta/confirmación → venta POS; capturas adicionales: `docs/design-review/orders-mobile.jpg`/`.b64` y `pos-desktop.jpg`/`.b64`, cada `.b64` bajo 55 000 caracteres. URLs locales: `http://localhost:5173` y `http://localhost:8000/api/health`. `db`, `api` y `frontend` quedaron healthy; reinicio/rebuild fue sin borrar volumen.
 

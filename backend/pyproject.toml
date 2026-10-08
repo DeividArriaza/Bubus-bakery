@@ -3,16 +3,16 @@ name = "bubus-bakery-api"
 version = "0.1.0"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-  "fastapi==0.115.6",
-  "uvicorn[standard]==0.34.0",
-  "SQLAlchemy==2.0.36",
-  "psycopg[binary]==3.2.3",
+  "fastapi==0.142.4",
+  "uvicorn[standard]==0.54.0",
+  "SQLAlchemy==2.0.54",
+  "psycopg[binary]==3.3.6",
 ]
 
 [project.optional-dependencies]
 test = [
   "httpx==0.28.1",
-  "pytest==8.3.4",
+  "pytest==9.0.3",
 ]
 
 [tool.pytest.ini_options]
