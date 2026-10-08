@@ -169,6 +169,8 @@ def test_operator_can_view_and_update_order_but_customer_cannot():
     assert denied.status_code == 403
     visible = client.get("/api/operator/orders", headers={"Cookie": f"bubus_session={operator}"})
     assert visible.status_code == 200 and visible.json()["orders"][0]["id"] == order_id
+    assert visible.json()["orders"][0]["customer"] == {"name": "owner", "email": "owner@example.com", "contactReference": None}
+    assert "customer" not in own.json()["orders"][0]
     changed = client.patch(f"/api/operator/orders/{order_id}", json={"status": "CONFIRMADA"}, headers=auth_headers(operator, "order-status"))
     assert changed.status_code == 200 and changed.json()["status"] == "CONFIRMADA"
 

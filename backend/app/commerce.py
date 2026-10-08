@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Component, Option, OptionGroup, Order, OrderItem, Product, Sale, SaleItem
+from .models import Component, Option, OptionGroup, Order, OrderItem, Product, Sale, SaleItem, User
 
 MAX_LINES = 20
 MAX_QUANTITY = 50
@@ -144,9 +144,13 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def order_json(session: Session, order: Order) -> dict:
+def order_json(session: Session, order: Order, *, include_customer: bool = False) -> dict:
     items = list(session.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)))
-    return {"id": order.id, "status": order.status, "paymentStatus": order.payment_status, "paymentIntent": order.payment_intent, "deliveryStatus": order.delivery_status, "fulfillment": order.fulfillment, "subtotalCents": order.subtotal_cents, "shippingAmountCents": order.shipping_amount_cents, "totalFinalCents": order.total_final_cents, "contactReference": order.contact_reference, "createdAt": order.created_at.isoformat(), "items": [{"slug": item.product_slug, "name": item.product_name, "unitPriceCents": item.unit_price_cents, "quantity": item.quantity, **json.loads(item.snapshot_json)} for item in items]}
+    result = {"id": order.id, "status": order.status, "paymentStatus": order.payment_status, "paymentIntent": order.payment_intent, "deliveryStatus": order.delivery_status, "fulfillment": order.fulfillment, "subtotalCents": order.subtotal_cents, "shippingAmountCents": order.shipping_amount_cents, "totalFinalCents": order.total_final_cents, "contactReference": order.contact_reference, "createdAt": order.created_at.isoformat(), "items": [{"slug": item.product_slug, "name": item.product_name, "unitPriceCents": item.unit_price_cents, "quantity": item.quantity, **json.loads(item.snapshot_json)} for item in items]}
+    if include_customer:
+        customer = session.get(User, order.customer_id)
+        result["customer"] = {"name": customer.name, "email": customer.email, "contactReference": order.contact_reference} if customer is not None else None
+    return result
 
 
 def sale_json(session: Session, sale: Sale) -> dict:

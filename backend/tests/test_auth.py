@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import time
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -85,3 +86,41 @@ def test_google_is_explicitly_unconfigured_without_fake_login():
     response = client.get("/api/auth/google/start")
     assert response.status_code == 503
     assert response.json() == {"error": "El acceso con Google aún no está configurado."}
+
+
+def test_auth_rate_limit_is_finite_and_returns_retry_after(monkeypatch):
+    monkeypatch.setenv("AUTH_RATE_LIMIT_ATTEMPTS", "2")
+    monkeypatch.setenv("AUTH_RATE_LIMIT_WINDOW_SECONDS", "1")
+    client, _ = auth_client()
+    payload = {"email": "limite@ejemplo.com", "password": "ClaveIncorrecta123"}
+    for _ in range(2):
+        assert client.post("/api/auth/login", json=payload, headers={"Origin": ORIGIN}).status_code == 401
+    limited = client.post("/api/auth/login", json=payload, headers={"Origin": ORIGIN})
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"]
+    assert "demasiados" in limited.json()["error"].lower()
+    time.sleep(1.1)
+    assert client.post("/api/auth/login", json=payload, headers={"Origin": ORIGIN}).status_code == 401
+
+
+def test_auth_rejects_oversize_password_and_duplicate_before_hash(monkeypatch):
+    client, _ = auth_client()
+    too_large = client.post("/api/auth/register", json={**register_payload(), "name": "A" * 9000}, headers={"Origin": ORIGIN})
+    assert too_large.status_code == 413
+    long_password = "A" * 129
+    oversized = client.post("/api/auth/register", json=register_payload(password=long_password), headers={"Origin": ORIGIN})
+    assert oversized.status_code == 422
+    assert "superar" in oversized.json()["error"].lower()
+    import app.main as main_module
+    calls = 0
+    original = main_module.hash_password
+    def counted(value):
+        nonlocal calls
+        calls += 1
+        return original(value)
+    monkeypatch.setattr(main_module, "hash_password", counted)
+    assert client.post("/api/auth/register", json=register_payload(), headers={"Origin": ORIGIN}).status_code == 201
+    calls = 0
+    duplicate = client.post("/api/auth/register", json=register_payload(), headers={"Origin": ORIGIN})
+    assert duplicate.status_code == 409
+    assert calls == 0

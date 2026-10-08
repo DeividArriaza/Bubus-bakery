@@ -33,6 +33,11 @@ const catalog = {
   ],
 };
 
+const operatorCatalog = {
+  ...catalog,
+  products: [...catalog.products, { ...catalog.products[0], slug: "simple-caja-6", name: "Caja de 6 Simple", composition: [{ product: "simple", quantity: 6 }], optionGroups: [] }],
+};
+
 describe("landing de catálogo", () => {
   it("muestra encabezado, precio GTQ y opciones de la caja mixta", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => catalog }));
@@ -82,5 +87,64 @@ describe("landing de catálogo", () => {
     await userEvent.type(within(panel).getByLabelText("Contraseña"), "UnaClaveSegura123!");
     await userEvent.click(within(panel).getByRole("button", { name: /^Iniciar sesión$/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Correo o contraseña incorrectos.");
+  });
+
+  it("bloquea doble clic del POS y muestra las dos opciones de la mixta", async () => {
+    let resolveSale: ((value: unknown) => void) | undefined;
+    const salePending = new Promise((resolve) => { resolveSale = resolve; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: { email: "operador@ejemplo.com", name: "Operador", role: "operator", emailVerified: false } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockReturnValueOnce(salePending);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    expect(await screen.findByRole("heading", { name: "Registro de ventas." })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "almendra" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "simple" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: /Confirmo/ }));
+    const submit = screen.getByRole("button", { name: "Registrar venta" });
+    await userEvent.click(submit);
+    await userEvent.click(submit);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    resolveSale?.({ id: 99 });
+  });
+
+  it("envía selección mixta y no muestra opciones falsas en caja homogénea", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: { email: "operador@ejemplo.com", name: "Operador", role: "operator", emailVerified: false } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 100, paymentStatus: "RECIBIDO" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await screen.findByRole("heading", { name: "Registro de ventas." });
+    await userEvent.click(screen.getByRole("radio", { name: /^simple$/ }));
+    await userEvent.click(screen.getByRole("checkbox", { name: /Confirmo/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Registrar venta" }));
+    expect(JSON.parse(fetchMock.mock.calls[3][1].body).items[0].options).toEqual({ "sixth-brownie": "simple" });
+    await userEvent.selectOptions(screen.getByLabelText("Producto"), "simple-caja-6");
+    expect(screen.queryByRole("radio", { name: "almendra" })).not.toBeInTheDocument();
+  });
+
+  it("reintenta tras una falla de red con la misma operación y no crea una segunda venta", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: { email: "operador@ejemplo.com", name: "Operador", role: "operator", emailVerified: false } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockRejectedValueOnce(new Error("La red no respondió"))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 101, paymentStatus: "RECIBIDO" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await screen.findByRole("heading", { name: "Registro de ventas." });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Confirmo/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Registrar venta" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("La red no respondió");
+    await userEvent.click(screen.getByRole("button", { name: "Registrar venta" }));
+    await waitFor(() => expect(screen.getByText("Venta #101 registrada.")).toBeInTheDocument());
+    expect(fetchMock.mock.calls[3][1].headers["Idempotency-Key"]).toBe(fetchMock.mock.calls[4][1].headers["Idempotency-Key"]);
   });
 });

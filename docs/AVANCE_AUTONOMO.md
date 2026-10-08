@@ -57,6 +57,10 @@ Resultados reproducibles de la revisión de integridad (sin borrar volumen): `do
 
 Implementado y verificado: catálogo compuesto acíclico en datos actuales, auth cliente/operador, solicitudes solo cajas para envío, subtotal y snapshots backend, estados separados, POS efectivo/transferencia, idempotencia, historial de actor/fecha/método/importes/referencia, UI española responsive y flujo browser desktop/móvil. Diferido: Google sin configuración, verificación/recuperación email sin proveedor, puntos sujetos a costes/reglas, Wallet, modalidad app nativa/PWA, tarjetas, inventario, banco, reparto, cobertura/coste/envío final, devoluciones y claim de producción.
 
+## Seguridad y UX POS — revisión vigente pendiente de aceptación padre
+
+La revisión independiente vigente corrigió idempotencia frontend con doble submit/reintento, selección POS mixta, detalle mínimo de cliente solo para operador y límites de acceso por proceso. Resultados actuales: backend `23 passed, 4 skipped`, PostgreSQL aislado `3 passed`, frontend `10 passed`, typecheck/build correctos, npm/pip audit sin vulnerabilidades conocidas y smoke browser desktop/móvil; evidencia completa en `docs/REVISION_INDEPENDIENTE.md`. El limitador no es distribuido multi-worker; Google, email, puntos, Wallet, tarjetas y cobertura/total final siguen diferidos.
+
 ## Revisión independiente de integridad — pendiente de aceptación padre
 
 Se reprodujeron tres hallazgos reales sobre el SHA `90a1f0f`: seed incompleto cuando migraciones ya habían creado el grupo de opciones; colisión concurrente de idempotencia; y `KeyError`/composición vendible al desactivar componentes u opciones. Se corrigieron con seed aditivo por relación, huella lógica y resolución del ganador tras `IntegrityError` únicamente si existe, `SELECT FOR UPDATE` para estados, validación de grafo acíclico y filtrado de relaciones vendibles. La migración aditiva es `008_idempotency_fingerprints.sql`.

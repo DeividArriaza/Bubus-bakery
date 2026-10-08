@@ -1,7 +1,10 @@
 import hashlib
 import hmac
 import secrets
+import threading
+import time
 import unicodedata
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
@@ -16,6 +19,46 @@ SESSION_DAYS = 7
 PASSWORD_SCRYPT_N = 2**14
 PASSWORD_SCRYPT_R = 8
 PASSWORD_SCRYPT_P = 1
+PASSWORD_MIN_LENGTH = 12
+PASSWORD_MAX_LENGTH = 128
+
+
+class AuthRateLimiter:
+    """Límite acotado por proceso; no pretende ser distribuido entre workers."""
+
+    def __init__(self, attempts: int = 5, window_seconds: int = 60, max_entries: int = 10_000):
+        self.attempts = max(1, attempts)
+        self.window_seconds = max(1, window_seconds)
+        self.max_entries = max(100, max_entries)
+        self._entries: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def check(self, keys: list[str]) -> int | None:
+        now = time.monotonic()
+        with self._lock:
+            for key in keys:
+                events = self._entries.get(key)
+                if events is not None:
+                    while events and events[0] <= now - self.window_seconds:
+                        events.popleft()
+                    if not events:
+                        self._entries.pop(key, None)
+            retry_after = 0
+            for key in keys:
+                events = self._entries.get(key, ())
+                if len(events) >= self.attempts:
+                    retry_after = max(retry_after, int(events[0] + self.window_seconds - now + 0.999))
+            if retry_after:
+                return max(1, retry_after)
+            for key in keys:
+                self._entries.setdefault(key, deque()).append(now)
+            while len(self._entries) > self.max_entries:
+                self._entries.pop(next(iter(self._entries)))
+            return None
+
+    def clear(self, key: str) -> None:
+        with self._lock:
+            self._entries.pop(key, None)
 
 
 def normalize_email(value: object) -> str:
@@ -31,15 +74,14 @@ def normalize_email(value: object) -> str:
 
 
 def hash_password(password: object) -> str:
-    if not isinstance(password, str) or len(password) < 12:
-        raise ValueError("La contraseña debe tener al menos 12 caracteres.")
+    validate_password(password)
     salt = secrets.token_bytes(16)
     digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=PASSWORD_SCRYPT_N, r=PASSWORD_SCRYPT_R, p=PASSWORD_SCRYPT_P)
     return f"scrypt${PASSWORD_SCRYPT_N}${PASSWORD_SCRYPT_R}${PASSWORD_SCRYPT_P}${salt.hex()}${digest.hex()}"
 
 
 def verify_password(password: object, encoded: str | None) -> bool:
-    if not isinstance(password, str) or not encoded or not encoded.startswith("scrypt$"):
+    if not isinstance(password, str) or len(password) < PASSWORD_MIN_LENGTH or len(password) > PASSWORD_MAX_LENGTH or not encoded or not encoded.startswith("scrypt$"):
         return False
     try:
         _, n, r, p, salt_hex, digest_hex = encoded.split("$", 5)
@@ -47,6 +89,13 @@ def verify_password(password: object, encoded: str | None) -> bool:
         return hmac.compare_digest(digest.hex(), digest_hex)
     except (ValueError, TypeError):
         return False
+
+
+def validate_password(password: object) -> None:
+    if not isinstance(password, str) or len(password) < PASSWORD_MIN_LENGTH:
+        raise ValueError(f"La contraseña debe tener al menos {PASSWORD_MIN_LENGTH} caracteres.")
+    if len(password) > PASSWORD_MAX_LENGTH:
+        raise ValueError(f"La contraseña no puede superar {PASSWORD_MAX_LENGTH} caracteres.")
 
 
 def _utc_now() -> datetime:

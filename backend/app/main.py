@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -9,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from .auth import SESSION_COOKIE, create_session, current_user, hash_password, normalize_email, public_user, require_origin, revoke_session, verify_password
+from .auth import AuthRateLimiter, PASSWORD_MAX_LENGTH, SESSION_COOKIE, create_session, current_user, hash_password, normalize_email, public_user, require_origin, revoke_session, validate_password, verify_password
 from .commerce import calculate_items, now_utc, order_fingerprint_data, order_json, payload_fingerprint, sale_fingerprint_data, sale_json
 from .db import apply_migrations, catalog_data, make_engine, make_session_factory, seed_catalog
 from .models import Order, OrderItem, Sale, SaleItem, User
@@ -40,6 +41,35 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type", "Idempotency-Key"])
 
     secure_cookie = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+    def configured_int(name: str, default: int) -> int:
+        try:
+            return max(1, int(os.getenv(name, str(default))))
+        except ValueError:
+            return default
+
+    auth_limiter = AuthRateLimiter(configured_int("AUTH_RATE_LIMIT_ATTEMPTS", 5), configured_int("AUTH_RATE_LIMIT_WINDOW_SECONDS", 60), configured_int("AUTH_RATE_LIMIT_MAX_ENTRIES", 10_000))
+    hash_slots = threading.BoundedSemaphore(configured_int("AUTH_MAX_HASH_CONCURRENCY", 4))
+    auth_max_bytes = configured_int("AUTH_MAX_REQUEST_BYTES", 8_192)
+
+    @app.middleware("http")
+    async def limit_auth_request_size(request: Request, call_next):
+        if request.url.path in {"/api/auth/register", "/api/auth/login"}:
+            content_length = request.headers.get("content-length")
+            if content_length and content_length.isdigit() and int(content_length) > auth_max_bytes:
+                return JSONResponse(status_code=413, content={"error": "La solicitud de acceso es demasiado grande."})
+        return await call_next(request)
+
+    def client_key(request: Request) -> str:
+        if os.getenv("TRUST_PROXY", "false").lower() == "true":
+            forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+            if forwarded:
+                return forwarded[:100]
+        return (request.client.host if request.client else "desconocido")[:100]
+
+    def auth_rate_limit(request: Request, email: str) -> None:
+        retry_after = auth_limiter.check([f"ip:{client_key(request)}", f"account:{email}"])
+        if retry_after is not None:
+            raise HTTPException(status_code=429, detail="Demasiados intentos de acceso. Intenta nuevamente más tarde.", headers={"Retry-After": str(retry_after)})
 
     def auth_error(message: str, status: int) -> JSONResponse:
         return JSONResponse(status_code=status, content={"error": message})
@@ -64,15 +94,18 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         require_origin(request, origins)
         try:
             email = normalize_email(payload.get("email"))
-            password_hash = hash_password(payload.get("password"))
             name = payload.get("name")
             if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120:
                 raise ValueError("Ingresa tu nombre.")
+            validate_password(payload.get("password"))
         except ValueError as error:
             return auth_error(str(error), 422)
         with session_factory() as session:
             if session.scalar(select(User).where(User.email == email)) is not None:
                 return auth_error("Ya existe una cuenta con ese correo.", 409)
+            auth_rate_limit(request, email)
+            with hash_slots:
+                password_hash = hash_password(payload.get("password"))
             user = User(email=email, name=name.strip(), password_hash=password_hash, role="customer", email_verified=False, active=True, created_at=datetime.now(timezone.utc))
             session.add(user)
             session.flush()
@@ -85,13 +118,23 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         require_origin(request, origins)
         try:
             email = normalize_email(payload.get("email"))
-        except ValueError:
+            password = payload.get("password")
+            if isinstance(password, str) and len(password) > PASSWORD_MAX_LENGTH:
+                raise ValueError(f"La contraseña no puede superar {PASSWORD_MAX_LENGTH} caracteres.")
+        except ValueError as error:
+            if "superar" in str(error):
+                return auth_error(str(error), 422)
             return auth_error("Correo o contraseña incorrectos.", 401)
-        password = payload.get("password")
+        auth_rate_limit(request, email)
         with session_factory() as session:
             user = session.scalar(select(User).where(User.email == email))
-            if user is None or not user.active or not verify_password(password, user.password_hash):
+            valid = False
+            if user is not None and user.active:
+                with hash_slots:
+                    valid = verify_password(password, user.password_hash)
+            if not valid:
                 return auth_error("Correo o contraseña incorrectos.", 401)
+            auth_limiter.clear(f"account:{email}")
             token = create_session(session, user)
             response = JSONResponse(content={"user": public_user(user)})
             return cookie_response(response, token)
@@ -196,7 +239,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         require_operator(request)
         with session_factory() as session:
             orders = session.scalars(select(Order).order_by(Order.created_at.desc())).all()
-            return {"orders": [order_json(session, order) for order in orders]}
+            return {"orders": [order_json(session, order, include_customer=True) for order in orders]}
 
     @app.patch("/api/operator/orders/{order_id}")
     def update_order(request: Request, order_id: int, payload: dict):
@@ -214,7 +257,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
             order.status = status
             order.updated_at = now_utc()
             session.commit()
-            return order_json(session, order)
+            return order_json(session, order, include_customer=True)
 
     @app.post("/api/operator/sales", status_code=201)
     def create_sale(request: Request, payload: dict, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
@@ -286,7 +329,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, error: HTTPException):
         message = error.detail if isinstance(error.detail, str) else "La solicitud no es válida."
-        return JSONResponse(status_code=error.status_code, content={"error": message})
+        return JSONResponse(status_code=error.status_code, content={"error": message}, headers=error.headers or {})
 
     return app
 
