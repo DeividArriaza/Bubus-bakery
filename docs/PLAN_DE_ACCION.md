@@ -379,4 +379,4 @@ Priorizar estas preguntas antes de seleccionar tecnologías o activar fidelizaci
 
 ## Estado vigente de la entrega publicada
 
-La entrega publicada en `feat/base-catalogo` está pausada con estado **NO_APROBADO_PARA_VENTAS_REALES** y alcance `development-demo`, tras la segunda revisión FINAL EXTERNA de `5265f6b`. Los resultados históricos no se borran ni se reinterpretan como aprobación. Los hallazgos y pruebas pendientes están documentados en [`docs/ESTADO_PENDIENTE.md`](ESTADO_PENDIENTE.md); no iniciar otro ciclo sin una autorización nueva.
+La entrega publicada en `feat/base-catalogo` está pausada con estado **NO_APROBADO_PARA_VENTAS_REALES** y alcance `development-demo`, tras la revisión final externa de `5265f6b`. Se alcanzó el límite operativo de dos ciclos adoptado para esta revisión; se pausa a la espera de acordar el siguiente ciclo. Los resultados históricos no se borran ni se reinterpretan como aprobación. Los hallazgos y pruebas pendientes están documentados en [`docs/ESTADO_PENDIENTE.md`](ESTADO_PENDIENTE.md); no iniciar otro ciclo sin una autorización nueva.

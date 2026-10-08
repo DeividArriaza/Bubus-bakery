@@ -4,7 +4,7 @@ Fecha: 2026-10-08 · rama `feat/base-catalogo` · base publicada `5265f6b2e04b95
 
 ## Estado vigente
 
-**NO_APROBADO_PARA_VENTAS_REALES**. El alcance actual es `development-demo`; no debe usarse con ventas reales hasta resolver los hallazgos de la segunda revisión FINAL EXTERNA. El presupuesto autorizado de dos ciclos está agotado y esta pausa no inicia un tercer ciclo.
+**NO_APROBADO_PARA_VENTAS_REALES**. El alcance actual es `development-demo`; no debe usarse con ventas reales hasta resolver los hallazgos de la revisión final externa. Se alcanzó el límite operativo de dos ciclos adoptado para esta revisión; se pausa a la espera de acordar el siguiente ciclo.
 
 La revisión fue externa al implementador. Este agente no la presenta como una revisión propia ni como aprobación. En esta pausa solo se publica documentación.
 
@@ -22,7 +22,7 @@ La revisión fue externa al implementador. Este agente no la presenta como una r
 
 ## Cobertura pendiente
 
-Los checks previos pasan, pero no cubren los casos señalados: backend 26 passed/5 skipped, PostgreSQL aislado 4 passed, frontend 11 passed, typecheck/build correctos, npm audit 0 y pip-audit 0. Estos resultados no demuestran que los hallazgos estén resueltos ni permiten afirmar ausencia total de vulnerabilidades o preparación para ventas.
+Resultados históricos del implementador: backend 26 passed/5 skipped, PostgreSQL aislado 4 passed, frontend 11 passed, typecheck/build correctos, npm audit 0 y pip-audit 0. El padre reprodujo separadamente sobre `5265f6b`: backend 27 passed/4 skipped/2 warnings con `REPO_ROOT` configurada, frontend 11 passed/typecheck/build, pip-audit 0, npm audit 0 y PostgreSQL real remoto 4 passed. Ningún resultado cubre por sí solo todos los casos señalados ni permite afirmar ausencia total de vulnerabilidades o preparación para ventas.
 
 Debe añadirse en un ciclo autorizado, sin borrar volúmenes:
 
