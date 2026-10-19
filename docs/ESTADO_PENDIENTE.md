@@ -39,7 +39,11 @@ Corregidos con TDD en este ciclo (RED real antes del cambio, pendiente de nueva 
 
 Verificación: backend 35 passed, 7 skipped; PostgreSQL aislado 7 passed; frontend 23 passed, typecheck y build correctos; `docker compose up -d --build api frontend` con servicios healthy y `127.0.0.1:5173/api/catalog` devolviendo 9 productos vía proxy.
 
-**Pendientes de decisión del usuario (no se tocaron):** hallazgos **2, 4 y 5** de esta revisión. Su detalle está en el reporte de la revisión externa de Codex, que no se incorporó a este repositorio; deben registrarse aquí cuando se decida cómo abordarlos.
+**Pendientes de decisión del usuario (no se tocaron):**
+
+- **Hallazgo 2 — Media** (`backend/app/commerce.py:217`): en ventas legacy con `customerId` nulo, el comparador acepta como equivalente cualquier correo que hoy no pertenezca a un usuario. Un payload distinto puede recibir `200` como replay idéntico, o un replay idéntico recibir `409` si el correo pasó a pertenecer a alguien. Requiere definir un tratamiento explícito (por ejemplo, conflicto con reconciliación manual).
+- **Hallazgo 4 — Media** (`backend/app/main.py:99` y `:270`): el registro crea cuentas activas sin verificar el correo y la venta se asocia a cualquier usuario activo con ese correo; alguien podría registrar el correo de otra persona y quedar asociado a sus ventas. Resolver con verificación de correo o aceptarlo expresamente.
+- **Hallazgo 5 — Media** (`backend/app/commerce.py:36`): el SHA-256 sin clave del correo es seudonimización, no anonimización; con acceso a los registros se pueden probar correos candidatos. Opciones: HMAC con secreto, o tratarlo como dato personal con protección y retención definidas.
 
 ## Cobertura pendiente
 
