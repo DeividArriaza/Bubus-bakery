@@ -20,18 +20,25 @@ La revisión fue externa al implementador. Este agente no la presenta como una r
 
 5. **Media — validación no estricta de tipos.** `paymentIntent`/`paymentMethod` pueden causar `TypeError` al evaluar pertenencia de listas/sets con objetos no hashables, produciendo 500. Además, `raw.get("options") or {}` acepta `[]`, `false`, `0` o `""` como `{}` en replay aunque una operación nueva debería responder 422. Pendiente: validar tipos estrictamente y de forma uniforme antes de usar sets o normalizar opciones.
 
+## Ciclo 3 autorizado (2026-10-19) — avance verificado, pendiente de revisión
+
+- **Hallazgo 1 corregido** (commit `1a250b2`): `inFlight`/`pendingRef` con `useRef` en solicitud y venta; clave y payload fijados antes del primer `await`. RED real: 3 pruebas nuevas con submits agrupados en un mismo `act` fallaron (2 llamadas en vez de 1; 3 en vez de 2 para reintento+recuperar). GREEN: frontend 14 passed, typecheck y build correctos.
+- **Hallazgo 4 corregido** (sin commit al registrar esto): con operación pendiente (en curso o incierta) los campos quedan deshabilitados y muestran el snapshot enviado; el reintento usa ese mismo payload. RED real: 3 pruebas nuevas (edición durante envío, cantidad 1→5 en el mismo turno del submit) fallaron. GREEN: frontend 17 passed, typecheck y build correctos.
+- **Hallazgos 2, 3 y 5 corregidos** en backend: la intención de venta guarda el SHA-256 del correo normalizado (no `customerId`) y la membresía solo se resuelve al crear; las intenciones legacy con `customerId` se traducen al comparar. `is_idempotency_unique` solo acepta `orders_customer_id_idempotency_key_key` / `sales_actor_id_idempotency_key_key` (y su texto SQLite exacto). `paymentIntent`/`paymentMethod` exigen `str` y `options` solo admite `null` u objeto, en operación nueva y replay. RED real: 5 fallos SQLite, 1 fallo PostgreSQL e `ImportError` del whitelist. GREEN: `docker compose run --rm -T -v "$PWD/backend:/app" api pytest -q` → 33 passed, 8 skipped; suite PostgreSQL aislada → 7 passed.
+- Limitación conocida: una intención legacy sin miembro (`customerId` nulo) no conservó el correo; su replay solo coincide si el correo enviado hoy no pertenece a ningún usuario.
+
 ## Cobertura pendiente
 
 Resultados históricos del implementador: backend 26 passed/5 skipped, PostgreSQL aislado 4 passed, frontend 11 passed, typecheck/build correctos, npm audit 0 y pip-audit 0. El padre reprodujo separadamente sobre `5265f6b`: backend 27 passed/4 skipped/2 warnings con `REPO_ROOT` configurada, frontend 11 passed/typecheck/build, pip-audit 0, npm audit 0 y PostgreSQL real remoto 4 passed. Ningún resultado cubre por sí solo todos los casos señalados ni permite afirmar ausencia total de vulnerabilidades o preparación para ventas.
 
 Debe añadirse en un ciclo autorizado, sin borrar volúmenes:
 
-- pruebas agrupadas de doble submit para solicitud y venta;
-- pruebas PostgreSQL de miembro desactivado, dos emails no miembros, payload legacy y replay histórico;
-- concurrencia con intenciones distintas bajo la misma clave;
-- unique violation ajena a idempotencia;
-- tipos inválidos para métodos/intenciones y opciones falsy en operación nueva y replay;
-- UI que congele y muestre el payload pendiente real durante red incierta.
+- ~~pruebas agrupadas de doble submit para solicitud y venta;~~ (ciclo 3)
+- ~~pruebas PostgreSQL de miembro desactivado, dos emails no miembros, payload legacy y replay histórico;~~ (ciclo 3)
+- ~~concurrencia con intenciones distintas bajo la misma clave;~~ (ciclo 3)
+- ~~unique violation ajena a idempotencia;~~ (ciclo 3)
+- ~~tipos inválidos para métodos/intenciones y opciones falsy en operación nueva y replay;~~ (ciclo 3)
+- ~~UI que congele y muestre el payload pendiente real durante red incierta.~~ (ciclo 3)
 
 ## Alcance diferido y límites
 
