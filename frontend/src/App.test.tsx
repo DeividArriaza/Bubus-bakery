@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
@@ -175,6 +175,72 @@ describe("landing de catálogo", () => {
     expect(saleCalls[1][1].headers["Idempotency-Key"]).toBe(saleCalls[0][1].headers["Idempotency-Key"]);
     await act(async () => resolveRetry?.({ ok: true, json: async () => ({ id: 103, paymentStatus: "RECIBIDO" }) }));
     expect(await screen.findByText("Venta #103 registrada.")).toBeInTheDocument();
+  });
+
+  it("bloquea la edición de la venta mientras está en curso", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: { email: "operador@ejemplo.com", name: "Operador", role: "operator", emailVerified: false } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockReturnValue(new Promise(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await screen.findByRole("heading", { name: "Registro de ventas." });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Confirmo/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Registrar venta" }));
+    expect(screen.getByLabelText("Cantidad")).toBeDisabled();
+    expect(screen.getByLabelText("Producto")).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Confirmo/ })).toBeDisabled();
+  });
+
+  it("tras una falla muestra y reintenta la venta realmente enviada, no el borrador editado", async () => {
+    let rejectSale: ((reason: unknown) => void) | undefined;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: { email: "operador@ejemplo.com", name: "Operador", role: "operator", emailVerified: false } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockReturnValueOnce(new Promise((_, reject) => { rejectSale = reject; }))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 104, paymentStatus: "RECIBIDO" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await screen.findByRole("heading", { name: "Registro de ventas." });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Confirmo/ }));
+    const form = screen.getByRole("button", { name: "Registrar venta" }).closest("form")!;
+    act(() => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "5" } });
+    });
+    await act(async () => rejectSale?.(new Error("La red no respondió")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("La red no respondió");
+    expect(screen.getByLabelText("Cantidad")).toHaveValue(1);
+    await userEvent.click(screen.getByRole("button", { name: "Reintentar venta" }));
+    await screen.findByText("Venta #104 registrada.");
+    const saleCalls = fetchMock.mock.calls.filter(([path]) => path === "/api/operator/sales");
+    expect(JSON.parse(saleCalls[1][1].body).items[0].quantity).toBe(1);
+  });
+
+  it("tras una falla muestra la solicitud realmente enviada y bloquea su edición en curso", async () => {
+    let rejectOrder: ((reason: unknown) => void) | undefined;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: { email: "cliente@ejemplo.com", name: "Cliente", role: "customer", emailVerified: false } }) })
+      .mockReturnValueOnce(new Promise((_, reject) => { rejectOrder = reject; }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await screen.findByRole("heading", { name: "Solicita una caja." });
+    const form = screen.getByRole("button", { name: "Enviar solicitud" }).closest("form")!;
+    act(() => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      fireEvent.change(screen.getByLabelText("Cantidad"), { target: { value: "5" } });
+    });
+    expect(screen.getByLabelText("Cantidad")).toBeDisabled();
+    expect(screen.getByLabelText("Caja")).toBeDisabled();
+    await act(async () => rejectOrder?.(new Error("La red no respondió")));
+    expect(await screen.findByRole("alert")).toHaveTextContent("La red no respondió");
+    expect(screen.getByLabelText("Cantidad")).toHaveValue(1);
   });
 
   it("envía selección mixta y no muestra opciones falsas en caja homogénea", async () => {
