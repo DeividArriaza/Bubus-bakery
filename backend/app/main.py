@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from .auth import AuthRateLimiter, PASSWORD_MAX_LENGTH, SESSION_COOKIE, create_session, current_user, hash_password, normalize_email, public_user, require_origin, revoke_session, validate_password, verify_password
-from .commerce import calculate_items, historical_order_intention, historical_sale_intention, now_utc, order_intention, order_json, payload_fingerprint, sale_intention, sale_json
+from .commerce import calculate_items, comparable_sale_intention, historical_order_intention, is_idempotency_unique, now_utc, order_intention, order_json, payload_fingerprint, sale_intention, sale_json
 from .db import apply_migrations, catalog_data, make_engine, make_session_factory, seed_catalog
 from .models import Order, OrderItem, Sale, SaleItem, User
 
@@ -185,15 +185,6 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="No tienes permisos para esta sección.")
         return user
 
-    def is_idempotency_unique(error: IntegrityError, entity: str) -> bool:
-        original = error.orig
-        code = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
-        text_error = str(original).lower()
-        if code == "23505":
-            constraint = getattr(getattr(original, "diag", None), "constraint_name", "") or ""
-            return "idempotency" in constraint.lower() or ("orders" in constraint.lower() if entity == "order" else "sales" in constraint.lower()) or "idempotency_key" in text_error
-        return f"{entity}s." in text_error and "idempotency_key" in text_error
-
     @app.post("/api/orders", status_code=201)
     def create_order(request: Request, payload: dict, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
         require_origin(request, origins)
@@ -277,24 +268,25 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         customer_name = payload.get("customerName")
         reference = payload.get("reference")
         with session_factory() as session:
-            customer_id = None
             customer_email = payload.get("customerEmail")
-            if customer_email:
+            normalized_email = None
+            if customer_email is not None and customer_email != "":
                 try:
-                    normalized = normalize_email(customer_email)
+                    normalized_email = normalize_email(customer_email)
                 except ValueError as error:
                     raise HTTPException(status_code=422, detail=str(error)) from error
-                member = session.scalar(select(User).where(User.email == normalized, User.active.is_(True)))
-                customer_id = member.id if member is not None else None
             existing = session.scalar(select(Sale).where(Sale.actor_id == actor.id, Sale.idempotency_key == key))
-            intention = sale_intention(payment_method=method, customer_id=customer_id, customer_name=customer_name, reference=reference, received_confirmed=payload.get("receivedConfirmed"), raw_items=payload.get("items"))
+            intention = sale_intention(payment_method=method, customer_email=normalized_email, customer_name=customer_name, reference=reference, received_confirmed=payload.get("receivedConfirmed"), raw_items=payload.get("items"))
             if existing is not None:
                 stored_items = list(session.scalars(select(SaleItem).where(SaleItem.sale_id == existing.id).order_by(SaleItem.id)))
-                existing_intention = json.loads(existing.idempotency_intent_json) if existing.idempotency_intent_json else historical_sale_intention(existing, stored_items)
+                existing_intention, intention = comparable_sale_intention(session, existing, stored_items, intention)
                 if existing_intention != intention:
                     raise HTTPException(status_code=409, detail="La clave de reintento ya fue usada con otra venta.")
                 return JSONResponse(status_code=200, content=sale_json(session, existing))
             snapshots, subtotal = calculate_items(session, payload.get("items"), delivery_only_boxes=False)
+            # La membresía solo se resuelve al crear la venta; los replays comparan contra la intención original.
+            member = session.scalar(select(User).where(User.email == normalized_email, User.active.is_(True))) if normalized_email else None
+            customer_id = member.id if member is not None else None
             normalized_method = intention["paymentMethod"]
             customer_name = intention["customerName"]
             reference = intention["reference"]
@@ -317,7 +309,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
                 if winner is None:
                     raise
                 winner_items = list(session.scalars(select(SaleItem).where(SaleItem.sale_id == winner.id).order_by(SaleItem.id)))
-                winner_intention = json.loads(winner.idempotency_intent_json) if winner.idempotency_intent_json else historical_sale_intention(winner, winner_items)
+                winner_intention, intention = comparable_sale_intention(session, winner, winner_items, intention)
                 if winner_intention != intention:
                     raise HTTPException(status_code=409, detail="La clave de reintento ya fue usada con otra venta.")
                 return JSONResponse(status_code=200, content=sale_json(session, winner))

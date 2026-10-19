@@ -158,3 +158,57 @@ def test_postgres_cancel_confirm_race_cannot_reopen_cancelled_order(postgres_cat
     assert confirmed.status_code in {200, 409}
     late_confirmation = TestClient(app).patch(f"/api/operator/orders/{order_id}", json={"status": "CONFIRMADA"}, headers=_headers(operator, "status-late-confirm"))
     assert late_confirmation.status_code == 409
+
+
+def test_postgres_idempotency_constraint_names_match_whitelist(postgres_catalog):
+    _, engine = postgres_catalog
+    with engine.connect() as connection:
+        names = set(connection.scalars(text("SELECT conname FROM pg_constraint WHERE contype = 'u' AND conrelid IN ('orders'::regclass, 'sales'::regclass)")))
+    assert {"orders_customer_id_idempotency_key_key", "sales_actor_id_idempotency_key_key"} <= names
+
+
+def test_postgres_sale_intention_uses_email_not_current_membership(postgres_catalog):
+    factory, _ = postgres_catalog
+    _user(factory, "pg-miembro@example.com")
+    operator = _user(factory, "pg-op-intencion@example.com", "operator")
+    app = create_app(factory)
+    client = TestClient(app)
+    body = {"items": [{"slug": "simple", "quantity": 1}], "paymentMethod": "efectivo", "receivedConfirmed": True, "customerEmail": "pg-miembro@example.com"}
+    member_sale = client.post("/api/operator/sales", json=body, headers=_headers(operator, "pg-member"))
+    assert member_sale.status_code == 201
+    legacy = client.post("/api/operator/sales", json=body, headers=_headers(operator, "pg-legacy"))
+    assert legacy.status_code == 201
+    with factory() as session:
+        member = session.scalar(select(User).where(User.email == "pg-miembro@example.com"))
+        session.get(Sale, legacy.json()["id"]).idempotency_intent_json = '{"customerId": %d, "customerName": null, "items": [{"options": {}, "quantity": 1, "slug": "simple"}], "paymentMethod": "EFECTIVO", "receivedConfirmed": true, "reference": null}' % member.id
+        member.active = False
+        session.commit()
+    replay = client.post("/api/operator/sales", json=body, headers=_headers(operator, "pg-member"))
+    assert replay.status_code == 200 and replay.json()["id"] == member_sale.json()["id"]
+    legacy_replay = client.post("/api/operator/sales", json=body, headers=_headers(operator, "pg-legacy"))
+    assert legacy_replay.status_code == 200 and legacy_replay.json()["id"] == legacy.json()["id"]
+    outsider = {**body, "customerEmail": "pg-uno@example.com"}
+    first = client.post("/api/operator/sales", json=outsider, headers=_headers(operator, "pg-outsider"))
+    other = client.post("/api/operator/sales", json={**body, "customerEmail": "pg-dos@example.com"}, headers=_headers(operator, "pg-outsider"))
+    assert first.status_code == 201 and other.status_code == 409
+
+
+def test_postgres_concurrent_distinct_intentions_same_key_one_wins_other_conflicts(postgres_catalog):
+    factory, _ = postgres_catalog
+    operator = _user(factory, "pg-race-intent@example.com", "operator")
+    app = create_app(factory)
+    bodies = [
+        {"items": [{"slug": "simple", "quantity": 1}], "paymentMethod": "efectivo", "receivedConfirmed": True},
+        {"items": [{"slug": "m-and-m", "quantity": 1}], "paymentMethod": "efectivo", "receivedConfirmed": True},
+    ]
+    barrier = threading.Barrier(2)
+
+    def sale_call(body):
+        barrier.wait()
+        return TestClient(app).post("/api/operator/sales", json=body, headers=_headers(operator, "pg-race-distinct"))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(sale_call, bodies))
+    assert sorted(response.status_code for response in responses) == [201, 409]
+    with factory() as session:
+        assert len(session.scalars(select(Sale)).all()) == 1

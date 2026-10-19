@@ -4,16 +4,37 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import Component, Option, OptionGroup, Order, OrderItem, Product, Sale, SaleItem, User
 
 MAX_LINES = 20
 MAX_QUANTITY = 50
+PAYMENT_INTENTS = {"NO_DEFINIDO", "AL_PEDIR", "AL_RECIBIR"}
+PAYMENT_METHODS = {"EFECTIVO", "TRANSFERENCIA"}
+# Únicas restricciones que representan un reintento idempotente; cualquier otra unique violation se relanza.
+IDEMPOTENCY_CONSTRAINTS = {
+    "order": ("orders_customer_id_idempotency_key_key", "unique constraint failed: orders.customer_id, orders.idempotency_key"),
+    "sale": ("sales_actor_id_idempotency_key_key", "unique constraint failed: sales.actor_id, sales.idempotency_key"),
+}
 
 
 def _error(message: str) -> HTTPException:
     return HTTPException(status_code=422, detail=message)
+
+
+def is_idempotency_unique(error: IntegrityError, entity: str) -> bool:
+    pg_name, sqlite_text = IDEMPOTENCY_CONSTRAINTS[entity]
+    original = error.orig
+    code = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+    if code == "23505":
+        return getattr(getattr(original, "diag", None), "constraint_name", None) == pg_name
+    return str(original).strip().lower() == sqlite_text
+
+
+def email_digest(email: str | None) -> str | None:
+    return hashlib.sha256(email.encode("utf-8")).hexdigest() if email is not None else None
 
 
 def _selected_options(session: Session, product: Product, raw_options: object, product_slugs: dict[int, str]) -> list[dict]:
@@ -129,7 +150,9 @@ def normalize_intention_items(raw_items: object) -> list[dict]:
         quantity = raw.get("quantity")
         if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1 or quantity > MAX_QUANTITY:
             raise _error(f"La cantidad debe ser un entero entre 1 y {MAX_QUANTITY}.")
-        raw_options = raw.get("options") or {}
+        raw_options = raw.get("options")
+        if raw_options is None:
+            raw_options = {}
         if not isinstance(raw_options, dict) or any(not isinstance(key, str) or not isinstance(value, str) for key, value in raw_options.items()):
             raise _error("Las opciones del producto no son válidas.")
         normalized.append({"slug": raw["slug"].strip(), "quantity": quantity, "options": {key: raw_options[key] for key in sorted(raw_options)}})
@@ -139,7 +162,7 @@ def normalize_intention_items(raw_items: object) -> list[dict]:
 def order_intention(*, fulfillment: object, payment_intent: object, contact_reference: object, raw_items: object) -> dict:
     if fulfillment != "envio":
         raise _error("Por ahora las solicitudes web son únicamente para envío.")
-    if payment_intent not in {"NO_DEFINIDO", "AL_PEDIR", "AL_RECIBIR"}:
+    if not isinstance(payment_intent, str) or payment_intent not in PAYMENT_INTENTS:
         raise _error("La intención de pago no es válida.")
     if contact_reference is not None and (not isinstance(contact_reference, str) or len(contact_reference.strip()) > 120):
         raise _error("La referencia de contacto es demasiado larga.")
@@ -151,8 +174,9 @@ def order_intention(*, fulfillment: object, payment_intent: object, contact_refe
     }
 
 
-def sale_intention(*, payment_method: object, customer_id: int | None, customer_name: object, reference: object, received_confirmed: object, raw_items: object) -> dict:
-    if payment_method not in {"efectivo", "transferencia", "EFECTIVO", "TRANSFERENCIA"}:
+def sale_intention(*, payment_method: object, customer_email: str | None, customer_name: object, reference: object, received_confirmed: object, raw_items: object) -> dict:
+    """Intención lógica de la venta: identifica al cliente por correo normalizado, no por su membresía actual."""
+    if not isinstance(payment_method, str) or payment_method.upper() not in PAYMENT_METHODS:
         raise _error("El medio debe ser efectivo o transferencia.")
     if customer_name is not None and (not isinstance(customer_name, str) or len(customer_name.strip()) > 120):
         raise _error("El nombre del cliente es demasiado largo.")
@@ -162,7 +186,7 @@ def sale_intention(*, payment_method: object, customer_id: int | None, customer_
         raise _error("El operador debe confirmar explícitamente la recepción del pago.")
     return {
         "paymentMethod": payment_method.upper(),
-        "customerId": customer_id,
+        "customerEmailSha256": email_digest(customer_email),
         "customerName": customer_name.strip() if isinstance(customer_name, str) else None,
         "reference": reference.strip() if isinstance(reference, str) else None,
         "receivedConfirmed": True,
@@ -188,6 +212,22 @@ def historical_sale_intention(sale: Sale, items: list[SaleItem]) -> dict:
         "receivedConfirmed": True,
         "items": [{"slug": item.product_slug, "quantity": item.quantity, "options": {option["group"]: option["product"] for option in json.loads(item.snapshot_json).get("selectedOptions", [])}} for item in items],
     }
+
+
+def comparable_sale_intention(session: Session, sale: Sale, items: list[SaleItem], intention: dict) -> tuple[dict, dict]:
+    """Devuelve (almacenada, nueva) en el mismo formato; traduce intenciones legacy basadas en customerId."""
+    stored = json.loads(sale.idempotency_intent_json) if sale.idempotency_intent_json else historical_sale_intention(sale, items)
+    if "customerId" not in stored:
+        return stored, intention
+    customer_id = stored.pop("customerId")
+    customer = session.get(User, customer_id) if customer_id is not None else None
+    stored["customerEmailSha256"] = email_digest(customer.email) if customer is not None else None
+    # Legacy sin miembro: el correo original no se guardó; solo coincide si hoy no pertenece a ningún usuario.
+    if customer_id is None and intention["customerEmailSha256"] is not None:
+        known = {email_digest(email) for email in session.scalars(select(User.email))}
+        if intention["customerEmailSha256"] not in known:
+            intention = {**intention, "customerEmailSha256": None}
+    return stored, intention
 
 
 def order_fingerprint_data(order: Order, items: list[OrderItem]) -> dict:

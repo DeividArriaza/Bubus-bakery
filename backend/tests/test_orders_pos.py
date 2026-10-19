@@ -216,3 +216,81 @@ def test_cors_allows_authenticated_patch_and_idempotency_header_only_from_dev_or
     assert response.headers["access-control-allow-origin"] == ORIGIN
     assert "PATCH" in response.headers["access-control-allow-methods"]
     assert "idempotency-key" in response.headers["access-control-allow-headers"].lower()
+
+
+def sale_body(**overrides):
+    return {"items": [{"slug": "simple", "quantity": 1}], "paymentMethod": "efectivo", "receivedConfirmed": True, **overrides}
+
+
+def test_sale_replay_with_member_email_survives_member_deactivation():
+    client, factory = setup_clients()
+    create_user(factory, "miembro@example.com")
+    operator = create_user(factory, "op-miembro@example.com", "operator")
+    body = sale_body(customerEmail="miembro@example.com")
+    first = client.post("/api/operator/sales", json=body, headers=auth_headers(operator, "member-replay"))
+    assert first.status_code == 201
+    with factory() as session:
+        session.scalar(select(User).where(User.email == "miembro@example.com")).active = False
+        session.commit()
+    replay = client.post("/api/operator/sales", json=body, headers=auth_headers(operator, "member-replay"))
+    assert replay.status_code == 200 and replay.json()["id"] == first.json()["id"]
+
+
+def test_sale_same_key_with_two_different_non_member_emails_is_conflict():
+    client, factory = setup_clients()
+    operator = create_user(factory, "op-no-miembro@example.com", "operator")
+    first = client.post("/api/operator/sales", json=sale_body(customerEmail="uno-externo@example.com"), headers=auth_headers(operator, "non-member-key"))
+    second = client.post("/api/operator/sales", json=sale_body(customerEmail="dos-externo@example.com"), headers=auth_headers(operator, "non-member-key"))
+    assert first.status_code == 201
+    assert second.status_code == 409
+    replay = client.post("/api/operator/sales", json=sale_body(customerEmail=" UNO-externo@example.com "), headers=auth_headers(operator, "non-member-key"))
+    assert replay.status_code == 200 and replay.json()["id"] == first.json()["id"]
+
+
+def test_legacy_sale_intention_with_customer_id_replays_after_member_deactivation():
+    client, factory = setup_clients()
+    create_user(factory, "legado@example.com")
+    operator = create_user(factory, "op-legado@example.com", "operator")
+    body = sale_body(customerEmail="legado@example.com")
+    first = client.post("/api/operator/sales", json=body, headers=auth_headers(operator, "legacy-intent"))
+    assert first.status_code == 201
+    with factory() as session:
+        sale = session.get(Sale, first.json()["id"])
+        member = session.scalar(select(User).where(User.email == "legado@example.com"))
+        sale.idempotency_intent_json = '{"customerId": %d, "customerName": null, "items": [{"options": {}, "quantity": 1, "slug": "simple"}], "paymentMethod": "EFECTIVO", "receivedConfirmed": true, "reference": null}' % member.id
+        member.active = False
+        session.commit()
+    replay = client.post("/api/operator/sales", json=body, headers=auth_headers(operator, "legacy-intent"))
+    assert replay.status_code == 200 and replay.json()["id"] == first.json()["id"]
+    with factory() as session:
+        session.get(Sale, first.json()["id"]).idempotency_intent_json = None
+        session.commit()
+    pre_009 = client.post("/api/operator/sales", json=body, headers=auth_headers(operator, "legacy-intent"))
+    assert pre_009.status_code == 200 and pre_009.json()["id"] == first.json()["id"]
+
+
+def test_invalid_payment_types_are_422_not_500():
+    client, factory = setup_clients()
+    customer = create_user(factory, "tipos@example.com")
+    operator = create_user(factory, "op-tipos@example.com", "operator")
+    for index, intent in enumerate([{"x": 1}, ["AL_PEDIR"], 1, True]):
+        response = client.post("/api/orders", json={"fulfillment": "envio", "paymentIntent": intent, "items": [{"slug": "simple-caja-6", "quantity": 1}]}, headers=auth_headers(customer, f"bad-intent-{index}"))
+        assert response.status_code == 422, intent
+    for index, method in enumerate([{"x": 1}, ["efectivo"], 1, None]):
+        response = client.post("/api/operator/sales", json=sale_body(paymentMethod=method), headers=auth_headers(operator, f"bad-method-{index}"))
+        assert response.status_code == 422, method
+    response = client.post("/api/operator/sales", json=sale_body(customerEmail={"x": 1}), headers=auth_headers(operator, "bad-email"))
+    assert response.status_code == 422
+
+
+def test_falsy_non_dict_options_are_422_for_new_operation_and_replay():
+    client, factory = setup_clients()
+    operator = create_user(factory, "op-opciones@example.com", "operator")
+    ok = client.post("/api/operator/sales", json=sale_body(), headers=auth_headers(operator, "options-replay"))
+    assert ok.status_code == 201
+    for index, options in enumerate([[], False, 0, ""]):
+        body = sale_body(items=[{"slug": "simple", "quantity": 1, "options": options}])
+        fresh = client.post("/api/operator/sales", json=body, headers=auth_headers(operator, f"options-new-{index}"))
+        replay = client.post("/api/operator/sales", json=body, headers=auth_headers(operator, "options-replay"))
+        assert fresh.status_code == 422, options
+        assert replay.status_code == 422, options
