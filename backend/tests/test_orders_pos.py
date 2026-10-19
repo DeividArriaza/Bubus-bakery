@@ -294,3 +294,14 @@ def test_falsy_non_dict_options_are_422_for_new_operation_and_replay():
         replay = client.post("/api/operator/sales", json=body, headers=auth_headers(operator, "options-replay"))
         assert fresh.status_code == 422, options
         assert replay.status_code == 422, options
+
+
+def test_order_status_with_non_string_type_is_422_not_500():
+    client, factory = setup_clients()
+    customer = create_user(factory, "estado-tipo@example.com")
+    operator = create_user(factory, "op-estado-tipo@example.com", "operator")
+    created = client.post("/api/orders", json={"fulfillment": "envio", "items": [{"slug": "simple-caja-6", "quantity": 1}]}, headers=auth_headers(customer, "status-type"))
+    order_id = created.json()["id"]
+    for index, status in enumerate([["CONFIRMADA"], {"x": 1}, 1, None]):
+        response = client.patch(f"/api/operator/orders/{order_id}", json={"status": status}, headers=auth_headers(operator, f"status-type-{index}"))
+        assert response.status_code == 422, status

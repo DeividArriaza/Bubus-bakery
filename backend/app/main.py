@@ -246,7 +246,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         require_origin(request, origins)
         require_operator(request)
         status = payload.get("status")
-        if status not in {"POR_CONFIRMAR", "CONFIRMADA", "CANCELADA"}:
+        if not isinstance(status, str) or status not in {"POR_CONFIRMAR", "CONFIRMADA", "CANCELADA"}:
             raise HTTPException(status_code=422, detail="Ese estado de solicitud no es válido.")
         with session_factory() as session:
             order = session.get(Order, order_id, with_for_update=True)

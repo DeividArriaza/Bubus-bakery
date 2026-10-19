@@ -12,6 +12,7 @@ def test_compose_requires_credentials_and_binds_public_services_locally():
     text = COMPOSE.read_text()
     assert '"127.0.0.1:8100:8000"' in text
     assert '"127.0.0.1:5173:5173"' in text
+    assert "API_PROXY_TARGET: http://api:8000" in text
     assert "POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?" in text
     assert "POSTGRES_DB: ${POSTGRES_DB:?" in text
     assert "POSTGRES_USER: ${POSTGRES_USER:?" in text

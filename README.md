@@ -58,6 +58,16 @@ npm ci
 npm run dev
 ```
 
+El servidor de Vite reenvía `/api` al destino de `API_PROXY_TARGET` (variable de entorno del proceso, no se expone al navegador):
+
+| Escenario | `API_PROXY_TARGET` |
+| --- | --- |
+| Vite fuera de Compose, API levantada con Compose | sin definir → `http://127.0.0.1:8100` |
+| Vite fuera de Compose, API con uvicorn local | `http://127.0.0.1:8000` |
+| Servicio `frontend` de Compose | `http://api:8000` (definido en `compose.yaml`) |
+
+Ejemplo con uvicorn local: `API_PROXY_TARGET=http://127.0.0.1:8000 npm run dev`.
+
 Backend: usar Python 3.12 o 3.13 en un entorno virtual y `backend/requirements.lock.txt`. La API espera `DATABASE_URL`; el Compose ya la configura.
 
 ## Verificación

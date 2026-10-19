@@ -1,10 +1,14 @@
 export type OrderLine = { slug: string; quantity: number; options?: Record<string, string> };
 export type OrderRecord = { id: number; status: string; paymentStatus: string; paymentIntent: string; deliveryStatus: string; fulfillment: string; subtotalCents: number; shippingAmountCents: number | null; totalFinalCents: number | null; contactReference?: string | null; customer?: { name: string; email: string; contactReference: string | null }; items: Array<{ slug: string; name: string; unitPriceCents: number; quantity: number; composition?: Array<{ product: string; quantity: number }>; selectedOptions: Array<{ group: string; product: string; quantity: number }> }> };
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...options, credentials: "include", headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) } });
   const data = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(data.error ?? "No pudimos completar la solicitud.");
+  if (!response.ok) throw new ApiError(data.error ?? "No pudimos completar la solicitud.", response.status);
   return data;
 }
 

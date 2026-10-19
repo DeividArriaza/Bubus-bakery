@@ -27,6 +27,20 @@ La revisión fue externa al implementador. Este agente no la presenta como una r
 - **Hallazgos 2, 3 y 5 corregidos** en backend: la intención de venta guarda el SHA-256 del correo normalizado (no `customerId`) y la membresía solo se resuelve al crear; las intenciones legacy con `customerId` se traducen al comparar. `is_idempotency_unique` solo acepta `orders_customer_id_idempotency_key_key` / `sales_actor_id_idempotency_key_key` (y su texto SQLite exacto). `paymentIntent`/`paymentMethod` exigen `str` y `options` solo admite `null` u objeto, en operación nueva y replay. RED real: 5 fallos SQLite, 1 fallo PostgreSQL e `ImportError` del whitelist. GREEN: `docker compose run --rm -T -v "$PWD/backend:/app" api pytest -q` → 33 passed, 8 skipped; suite PostgreSQL aislada → 7 passed.
 - Limitación conocida: una intención legacy sin miembro (`customerId` nulo) no conservó el correo; su replay solo coincide si el correo enviado hoy no pertenece a ningún usuario.
 
+## Revisión externa del PR #2 (Codex, 2026-10-19) — ciclo 4
+
+Resultado de la revisión: **NO APROBADO** para ventas reales; se mantiene `NO_APROBADO_PARA_VENTAS_REALES`.
+
+Corregidos con TDD en este ciclo (RED real antes del cambio, pendiente de nueva revisión):
+
+- **Hallazgo 1 — Alta:** una venta o solicitud incierta perdía clave y payload al recargar, desmontar o pulsar «Nueva venta/solicitud». Ahora la operación pendiente se guarda en `localStorage` (por usuario y tipo) antes del primer `await`, se restaura al montar con el formulario bloqueado y se quitaron los botones «Nueva …». Solo se libera tras éxito o rechazo definitivo 4xx (salvo 408/429); red caída o 5xx la mantienen pendiente. RED: 4 pruebas fallaron; GREEN: frontend 23 passed.
+- **Hallazgo 3 — Media:** `PATCH /api/operator/orders/{id}` devolvía 500 con `status` no string; ahora responde 422. RED: 1 prueba falló; GREEN incluido abajo.
+- **Hallazgo 6 — Baja:** el proxy de Vite estaba fijo en `http://api:8000`. Ahora usa `API_PROXY_TARGET` (Compose: `http://api:8000`; por defecto fuera de Compose: `http://127.0.0.1:8100`), documentado en el README. RED: prueba de configuración y de Compose fallaron.
+
+Verificación: backend 35 passed, 7 skipped; PostgreSQL aislado 7 passed; frontend 23 passed, typecheck y build correctos; `docker compose up -d --build api frontend` con servicios healthy y `127.0.0.1:5173/api/catalog` devolviendo 9 productos vía proxy.
+
+**Pendientes de decisión del usuario (no se tocaron):** hallazgos **2, 4 y 5** de esta revisión. Su detalle está en el reporte de la revisión externa de Codex, que no se incorporó a este repositorio; deben registrarse aquí cuando se decida cómo abordarlos.
+
 ## Cobertura pendiente
 
 Resultados históricos del implementador: backend 26 passed/5 skipped, PostgreSQL aislado 4 passed, frontend 11 passed, typecheck/build correctos, npm audit 0 y pip-audit 0. El padre reprodujo separadamente sobre `5265f6b`: backend 27 passed/4 skipped/2 warnings con `REPO_ROOT` configurada, frontend 11 passed/typecheck/build, pip-audit 0, npm audit 0 y PostgreSQL real remoto 4 passed. Ningún resultado cubre por sí solo todos los casos señalados ni permite afirmar ausencia total de vulnerabilidades o preparación para ventas.

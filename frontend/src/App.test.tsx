@@ -38,6 +38,14 @@ const operatorCatalog = {
   products: [...catalog.products, { ...catalog.products[0], slug: "simple-caja-6", name: "Caja de 6 Simple", composition: [{ product: "simple", quantity: 6 }], optionGroups: [] }],
 };
 
+const operatorUser = { email: "operador@ejemplo.com", name: "Operador", role: "operator", emailVerified: false };
+const customerUser = { email: "cliente@ejemplo.com", name: "Cliente", role: "customer", emailVerified: false };
+
+async function openOperator() {
+  await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+  await screen.findByRole("heading", { name: "Registro de ventas." });
+}
+
 function submitTwiceInSameTurn(form: HTMLFormElement) {
   act(() => {
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -241,6 +249,102 @@ describe("landing de catálogo", () => {
     await act(async () => rejectOrder?.(new Error("La red no respondió")));
     expect(await screen.findByRole("alert")).toHaveTextContent("La red no respondió");
     expect(screen.getByLabelText("Cantidad")).toHaveValue(1);
+  });
+
+  it("guarda la venta pendiente antes de conocer la respuesta", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: operatorUser }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockReturnValue(new Promise(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await openOperator();
+    await userEvent.click(screen.getByRole("checkbox", { name: /Confirmo/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Registrar venta" }));
+    const saleCall = fetchMock.mock.calls.find(([path]) => path === "/api/operator/sales")!;
+    const stored = Object.keys(localStorage).map((key) => localStorage.getItem(key) ?? "").join(" ");
+    expect(stored).toContain(saleCall[1].headers["Idempotency-Key"]);
+  });
+
+  it("una venta incierta sobrevive a recargar, no se puede abandonar y se reintenta con la misma clave", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: operatorUser }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockRejectedValueOnce(new Error("La red no respondió"));
+    vi.stubGlobal("fetch", fetchMock);
+    const first = render(<App />);
+    await openOperator();
+    await userEvent.click(screen.getByRole("checkbox", { name: /Confirmo/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Registrar venta" }));
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("button", { name: "Nueva venta" })).not.toBeInTheDocument();
+    const originalKey = fetchMock.mock.calls.find(([path]) => path === "/api/operator/sales")![1].headers["Idempotency-Key"];
+    first.unmount();
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: operatorUser }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 105, paymentStatus: "RECIBIDO" }) });
+    render(<App />);
+    await openOperator();
+    expect(screen.getByLabelText("Cantidad")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Nueva venta" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Reintentar venta" }));
+    await screen.findByText("Venta #105 registrada.");
+    const saleCalls = fetchMock.mock.calls.filter(([path]) => path === "/api/operator/sales");
+    expect(saleCalls[1][1].headers["Idempotency-Key"]).toBe(originalKey);
+    expect(screen.getByLabelText("Cantidad")).not.toBeDisabled();
+  });
+
+  it("una solicitud incierta sobrevive a desmontar y se reintenta con la misma clave", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: customerUser }) })
+      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ error: "Servicio no disponible." }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const first = render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await screen.findByRole("heading", { name: "Solicita una caja." });
+    await userEvent.click(screen.getByRole("button", { name: "Enviar solicitud" }));
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("button", { name: "Nueva solicitud" })).not.toBeInTheDocument();
+    const originalKey = fetchMock.mock.calls.find(([path]) => path === "/api/orders")![1].headers["Idempotency-Key"];
+    first.unmount();
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: customerUser }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 56 }) });
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await screen.findByRole("heading", { name: "Solicita una caja." });
+    expect(screen.getByLabelText("Cantidad")).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Reintentar solicitud" }));
+    await screen.findByText("Solicitud #56 enviada para confirmación.");
+    const orderCalls = fetchMock.mock.calls.filter(([path]) => path === "/api/orders");
+    expect(orderCalls[1][1].headers["Idempotency-Key"]).toBe(originalKey);
+  });
+
+  it("un rechazo definitivo del servidor libera la operación y la siguiente usa otra clave", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: operatorUser }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ error: "La clave de reintento ya fue usada con otra venta." }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 106, paymentStatus: "RECIBIDO" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await openOperator();
+    await userEvent.click(screen.getByRole("checkbox", { name: /Confirmo/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Registrar venta" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("La clave de reintento ya fue usada");
+    expect(screen.getByLabelText("Cantidad")).not.toBeDisabled();
+    expect(Object.keys(localStorage).filter((key) => key.startsWith("bubus:"))).toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "Registrar venta" }));
+    await screen.findByText("Venta #106 registrada.");
+    const saleCalls = fetchMock.mock.calls.filter(([path]) => path === "/api/operator/sales");
+    expect(saleCalls[1][1].headers["Idempotency-Key"]).not.toBe(saleCalls[0][1].headers["Idempotency-Key"]);
   });
 
   it("envía selección mixta y no muestra opciones falsas en caja homogénea", async () => {

@@ -2,12 +2,25 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { fetchCatalog } from "./api";
 import { getSession, login, logout, register } from "./auth";
 import type { AuthUser } from "./auth";
-import { createOrder, createSale, listOperatorOrders, updateOrder } from "./orders";
+import { ApiError, createOrder, createSale, listOperatorOrders, updateOrder } from "./orders";
 import type { OrderLine, OrderRecord } from "./orders";
 import type { Product } from "./types";
 
 type Filter = "todos" | "individual" | "caja";
 type PendingOperation<T> = { key: string; payload: T };
+type OrderPayload = { items: OrderLine[]; contactReference: string; paymentIntent: "NO_DEFINIDO" | "AL_PEDIR" | "AL_RECIBIR" };
+type SalePayload = { items: OrderLine[]; paymentMethod: "efectivo" | "transferencia"; customerName: string; customerEmail: string; reference: string; receivedConfirmed: boolean };
+
+// Una operación con resultado desconocido se persiste para que recargar o desmontar nunca genere una clave nueva.
+function pendingStorageKey(kind: "solicitud" | "venta", userEmail: string) { return `bubus:operacion-pendiente:${kind}:${userEmail}`; }
+function readPending<T>(storageKey: string): PendingOperation<T> | null {
+  try { const raw = localStorage.getItem(storageKey); return raw ? JSON.parse(raw) as PendingOperation<T> : null; } catch { return null; }
+}
+function writePending<T>(storageKey: string, operation: PendingOperation<T> | null) {
+  try { if (operation) localStorage.setItem(storageKey, JSON.stringify(operation)); else localStorage.removeItem(storageKey); } catch { /* sin almacenamiento disponible, la operación vive solo en memoria */ }
+}
+// 4xx (salvo 408/429) significa que el servidor no creó la operación; red caída o 5xx dejan el resultado desconocido.
+function isDefinitiveRejection(reason: unknown) { return reason instanceof ApiError && reason.status >= 400 && reason.status < 500 && reason.status !== 408 && reason.status !== 429; }
 
 function formatPrice(cents: number) {
   return `Q${(cents / 100).toFixed(2)}`;
@@ -74,7 +87,9 @@ function AuthPanel({ onClose, onUser }: { onClose: () => void; onUser: (user: Au
   </section>;
 }
 
-function CustomerWorkspace({ products }: { products: Product[] }) {
+function CustomerWorkspace({ products, userEmail }: { products: Product[]; userEmail: string }) {
+  const storageKey = pendingStorageKey("solicitud", userEmail);
+  const [restored] = useState(() => readPending<OrderPayload>(storageKey));
   const boxes = products.filter((product) => product.presentation === "caja6");
   const [slug, setSlug] = useState(boxes[0]?.slug ?? "");
   const [choice, setChoice] = useState("");
@@ -82,13 +97,13 @@ function CustomerWorkspace({ products }: { products: Product[] }) {
   const [contactReference, setContactReference] = useState("");
   const [paymentIntent, setPaymentIntent] = useState<"NO_DEFINIDO" | "AL_PEDIR" | "AL_RECIBIR">("NO_DEFINIDO");
   const [result, setResult] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(restored ? "Hay una solicitud con resultado desconocido. Reinténtala o recupera su resultado antes de crear otra." : null);
   const [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState<PendingOperation<{ items: OrderLine[]; contactReference: string; paymentIntent: "NO_DEFINIDO" | "AL_PEDIR" | "AL_RECIBIR" }> | null>(null);
-  const [uncertain, setUncertain] = useState(false);
+  const [pending, setPending] = useState<PendingOperation<OrderPayload> | null>(restored);
+  const [uncertain, setUncertain] = useState(Boolean(restored));
   // Refs síncronos: el estado de React no se actualiza entre dos submits del mismo turno.
   const inFlight = useRef(false);
-  const pendingRef = useRef<typeof pending>(null);
+  const pendingRef = useRef<typeof pending>(restored);
   const selected = boxes.find((product) => product.slug === slug);
   const optionGroup = selected?.optionGroups[0];
   const validChoice = optionGroup?.options.some((option) => option.product === choice) ? choice : optionGroup?.options[0]?.product ?? "";
@@ -99,22 +114,28 @@ function CustomerWorkspace({ products }: { products: Product[] }) {
   async function submit(event: FormEvent) {
     event.preventDefault(); if (inFlight.current) return; inFlight.current = true; setError(null); setResult(null); setBusy(true);
     const operation = pendingRef.current ?? { key: crypto.randomUUID(), payload: { items: [{ slug, quantity, options: optionGroup ? { [optionGroup.code]: validChoice } : {} }], contactReference, paymentIntent } };
-    pendingRef.current = operation; setPending(operation);
-    try { const order = await createOrder(operation.payload.items, operation.payload.contactReference, operation.payload.paymentIntent, operation.key); setResult(`Solicitud #${order.id} enviada para confirmación.`); pendingRef.current = null; setPending(null); setUncertain(false); }
-    catch (reason) { const message = reason instanceof Error ? reason.message : "No pudimos enviar la solicitud."; setError(message.includes("clave de reintento") ? `${message} La operación conservada tiene otros datos; recupérala o inicia una nueva solicitud.` : `${message} Conservamos los datos enviados. Puedes reintentar o recuperar el resultado.`); setUncertain(true); }
+    pendingRef.current = operation; writePending(storageKey, operation); setPending(operation);
+    try { const order = await createOrder(operation.payload.items, operation.payload.contactReference, operation.payload.paymentIntent, operation.key); setResult(`Solicitud #${order.id} enviada para confirmación.`); release(); }
+    catch (reason) {
+      const message = reason instanceof Error ? reason.message : "No pudimos enviar la solicitud.";
+      if (isDefinitiveRejection(reason)) { release(); setError(`${message} La solicitud no se creó; revisa los datos y envíala de nuevo.`); }
+      else { setError(`${message} Conservamos los datos enviados. Reintenta o recupera el resultado antes de crear otra solicitud.`); setUncertain(true); }
+    }
     finally { inFlight.current = false; setBusy(false); }
   }
-  function startNew() { if (inFlight.current) return; pendingRef.current = null; setPending(null); setUncertain(false); setError(null); setResult(null); }
+  function release() { pendingRef.current = null; writePending(storageKey, null); setPending(null); setUncertain(false); }
   // Con una operación pendiente (en curso o incierta) el formulario muestra el payload enviado, no el borrador.
   const locked = Boolean(pending);
   const retryable = Boolean(pending && uncertain);
   const shownLine = pending?.payload.items[0];
   const shownGroup = shownLine ? boxes.find((product) => product.slug === shownLine.slug)?.optionGroups[0] : optionGroup;
   const shownChoice = shownLine ? (shownGroup && shownLine.options?.[shownGroup.code]) ?? "" : validChoice;
-  return <section className="workspace customer-workspace" aria-label="Solicitar envío"><div><p className="eyebrow">SOLICITUD WEB</p><h2>Solicita una caja.</h2><p>La dueña confirmará cobertura, envío y total final. Esta solicitud no es un cobro ni crea puntos.</p></div><form className="workspace-form" onSubmit={submit}><label>Caja<select disabled={locked} value={shownLine?.slug ?? slug} onChange={(event) => setSlug(event.target.value)}>{boxes.map((product) => <option key={product.slug} value={product.slug}>{product.name} · {formatPrice(product.priceCents)}</option>)}</select></label>{shownGroup ? <label>Elección<select disabled={locked} value={shownChoice} onChange={(event) => setChoice(event.target.value)}>{shownGroup.options.map((option) => <option key={option.product} value={option.product}>{option.product === "almendra" ? "Almendra" : "Simple"}</option>)}</select></label> : null}<label>Cantidad<input disabled={locked} type="number" min="1" max="50" value={shownLine?.quantity ?? quantity} onChange={(event) => setQuantity(Number(event.target.value))} /></label><label>Referencia de contacto (opcional)<input disabled={locked} value={pending?.payload.contactReference ?? contactReference} maxLength={120} onChange={(event) => setContactReference(event.target.value)} placeholder="Ej. WhatsApp" /></label><label>Intención de pago (sin cobro)<select disabled={locked} value={pending?.payload.paymentIntent ?? paymentIntent} onChange={(event) => setPaymentIntent(event.target.value as "NO_DEFINIDO" | "AL_PEDIR" | "AL_RECIBIR")}><option value="NO_DEFINIDO">Aún no decidido</option><option value="AL_PEDIR">Al pedir</option><option value="AL_RECIBIR">Al recibir</option></select></label><button className="primary-button" type="submit" disabled={busy}>{busy ? "Enviando…" : retryable ? "Reintentar solicitud" : "Enviar solicitud"}</button>{retryable && <button type="button" className="outline-button" onClick={() => void submit(new Event("submit") as unknown as FormEvent)}>Recuperar resultado</button>}{retryable && <button type="button" className="text-button" onClick={startNew}>Nueva solicitud</button>}{result && <p className="state" role="status">{result}</p>}{error && <p className="state state--error" role="alert">{error}</p>}</form></section>;
+  return <section className="workspace customer-workspace" aria-label="Solicitar envío"><div><p className="eyebrow">SOLICITUD WEB</p><h2>Solicita una caja.</h2><p>La dueña confirmará cobertura, envío y total final. Esta solicitud no es un cobro ni crea puntos.</p></div><form className="workspace-form" onSubmit={submit}><label>Caja<select disabled={locked} value={shownLine?.slug ?? slug} onChange={(event) => setSlug(event.target.value)}>{boxes.map((product) => <option key={product.slug} value={product.slug}>{product.name} · {formatPrice(product.priceCents)}</option>)}</select></label>{shownGroup ? <label>Elección<select disabled={locked} value={shownChoice} onChange={(event) => setChoice(event.target.value)}>{shownGroup.options.map((option) => <option key={option.product} value={option.product}>{option.product === "almendra" ? "Almendra" : "Simple"}</option>)}</select></label> : null}<label>Cantidad<input disabled={locked} type="number" min="1" max="50" value={shownLine?.quantity ?? quantity} onChange={(event) => setQuantity(Number(event.target.value))} /></label><label>Referencia de contacto (opcional)<input disabled={locked} value={pending?.payload.contactReference ?? contactReference} maxLength={120} onChange={(event) => setContactReference(event.target.value)} placeholder="Ej. WhatsApp" /></label><label>Intención de pago (sin cobro)<select disabled={locked} value={pending?.payload.paymentIntent ?? paymentIntent} onChange={(event) => setPaymentIntent(event.target.value as "NO_DEFINIDO" | "AL_PEDIR" | "AL_RECIBIR")}><option value="NO_DEFINIDO">Aún no decidido</option><option value="AL_PEDIR">Al pedir</option><option value="AL_RECIBIR">Al recibir</option></select></label><button className="primary-button" type="submit" disabled={busy}>{busy ? "Enviando…" : retryable ? "Reintentar solicitud" : "Enviar solicitud"}</button>{retryable && <button type="button" className="outline-button" onClick={() => void submit(new Event("submit") as unknown as FormEvent)}>Recuperar resultado</button>}{result && <p className="state" role="status">{result}</p>}{error && <p className="state state--error" role="alert">{error}</p>}</form></section>;
 }
 
-function OperatorWorkspace({ products }: { products: Product[] }) {
+function OperatorWorkspace({ products, userEmail }: { products: Product[]; userEmail: string }) {
+  const storageKey = pendingStorageKey("venta", userEmail);
+  const [restored] = useState(() => readPending<SalePayload>(storageKey));
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [slug, setSlug] = useState(products[0]?.slug ?? "");
   const [quantity, setQuantity] = useState(1);
@@ -125,12 +146,12 @@ function OperatorWorkspace({ products }: { products: Product[] }) {
   const [confirmed, setConfirmed] = useState(false);
   const [saleOptions, setSaleOptions] = useState<Record<string, string>>(() => Object.fromEntries((products[0]?.optionGroups ?? []).map((group) => [group.code, group.options[0]?.product ?? ""])));
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(restored ? "Hay una venta con resultado desconocido. Reinténtala o recupera su resultado antes de registrar otra." : null);
   const [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState<PendingOperation<{ items: OrderLine[]; paymentMethod: "efectivo" | "transferencia"; customerName: string; customerEmail: string; reference: string; receivedConfirmed: boolean }> | null>(null);
-  const [uncertain, setUncertain] = useState(false);
+  const [pending, setPending] = useState<PendingOperation<SalePayload> | null>(restored);
+  const [uncertain, setUncertain] = useState(Boolean(restored));
   const inFlight = useRef(false);
-  const pendingRef = useRef<typeof pending>(null);
+  const pendingRef = useRef<typeof pending>(restored);
   const selectedProduct = products.find((product) => product.slug === slug);
 
   async function refresh() { try { setOrders((await listOperatorOrders()).orders); } catch { setError("No pudimos cargar las solicitudes."); } }
@@ -143,16 +164,17 @@ function OperatorWorkspace({ products }: { products: Product[] }) {
   async function registerSale(event: FormEvent) {
     event.preventDefault(); if (inFlight.current) return; inFlight.current = true; setError(null); setMessage(null); setBusy(true);
     const operation = pendingRef.current ?? { key: crypto.randomUUID(), payload: { items: [{ slug, quantity, options: saleOptions }], paymentMethod: method, customerName, customerEmail, reference, receivedConfirmed: confirmed } };
-    pendingRef.current = operation; setPending(operation);
+    pendingRef.current = operation; writePending(storageKey, operation); setPending(operation);
     try {
       const sale = await createSale(operation.payload.items, operation.payload.paymentMethod, operation.payload.customerName, operation.payload.customerEmail, operation.payload.reference, operation.payload.receivedConfirmed, operation.key);
-      setMessage(`Venta #${(sale as { id: number }).id} registrada.`); setConfirmed(false); pendingRef.current = null; setPending(null); setUncertain(false);
+      setMessage(`Venta #${(sale as { id: number }).id} registrada.`); setConfirmed(false); release();
     } catch (reason) {
       const text = reason instanceof Error ? reason.message : "No pudimos registrar la venta.";
-      setError(text.includes("clave de reintento") ? `${text} La operación conservada tiene otros datos; recupérala o inicia una nueva venta.` : `${text} Conservamos los datos enviados. Puedes reintentar o recuperar el resultado.`); setUncertain(true);
+      if (isDefinitiveRejection(reason)) { release(); setError(`${text} La venta no se registró; revisa los datos y regístrala de nuevo.`); }
+      else { setError(`${text} Conservamos los datos enviados. Reintenta o recupera el resultado antes de registrar otra venta.`); setUncertain(true); }
     } finally { inFlight.current = false; setBusy(false); }
   }
-  function startNewSale() { if (inFlight.current) return; pendingRef.current = null; setPending(null); setUncertain(false); setError(null); setMessage(null); }
+  function release() { pendingRef.current = null; writePending(storageKey, null); setPending(null); setUncertain(false); }
   const locked = Boolean(pending);
   const retryable = Boolean(pending && uncertain);
   const shown = pending?.payload;
@@ -174,7 +196,7 @@ function OperatorWorkspace({ products }: { products: Product[] }) {
       <form className="workspace-form" onSubmit={registerSale}><h3>Venta presencial</h3>
         <label>Producto<select disabled={locked} value={shownLine?.slug ?? slug} onChange={(event) => selectProduct(event.target.value)}>{products.map((product) => <option key={product.slug} value={product.slug}>{product.name} · {formatPrice(product.priceCents)}</option>)}</select></label>
         {shownProduct?.optionGroups.map((group) => <fieldset disabled={locked} key={group.code}><legend>{group.label}</legend>{group.options.map((option) => <label key={option.product}><input type="radio" name={`sale-${group.code}`} checked={shownOptions[group.code] === option.product} onChange={() => setSaleOptions((current) => ({ ...current, [group.code]: option.product }))} /> {option.product}</label>)}</fieldset>)}
-        <label>Cantidad<input disabled={locked} type="number" min="1" max="50" value={shownLine?.quantity ?? quantity} onChange={(event) => setQuantity(Number(event.target.value))} /></label><label>Cliente (opcional)<input disabled={locked} value={shown?.customerName ?? customerName} maxLength={120} onChange={(event) => setCustomerName(event.target.value)} /></label><label>Correo de miembro (opcional)<input disabled={locked} type="email" value={shown?.customerEmail ?? customerEmail} maxLength={320} onChange={(event) => setCustomerEmail(event.target.value)} /></label><label>Referencia interna (opcional)<input disabled={locked} value={shown?.reference ?? reference} maxLength={120} onChange={(event) => setReference(event.target.value)} /></label><label>Medio<select disabled={locked} value={shown?.paymentMethod ?? method} onChange={(event) => setMethod(event.target.value as "efectivo" | "transferencia")}><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option></select></label><label className="check-label"><input disabled={locked} type="checkbox" checked={shown?.receivedConfirmed ?? confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> Confirmo que recibí el pago</label><button className="primary-button" type="submit" disabled={busy}>{busy ? "Registrando…" : retryable ? "Reintentar venta" : "Registrar venta"}</button>{retryable && <button type="button" className="outline-button" onClick={() => void registerSale(new Event("submit") as unknown as FormEvent)}>Recuperar resultado</button>}{retryable && <button type="button" className="text-button" onClick={startNewSale}>Nueva venta</button>}{message && <p className="state" role="status">{message}</p>}{error && <p className="state state--error" role="alert">{error}</p>}
+        <label>Cantidad<input disabled={locked} type="number" min="1" max="50" value={shownLine?.quantity ?? quantity} onChange={(event) => setQuantity(Number(event.target.value))} /></label><label>Cliente (opcional)<input disabled={locked} value={shown?.customerName ?? customerName} maxLength={120} onChange={(event) => setCustomerName(event.target.value)} /></label><label>Correo de miembro (opcional)<input disabled={locked} type="email" value={shown?.customerEmail ?? customerEmail} maxLength={320} onChange={(event) => setCustomerEmail(event.target.value)} /></label><label>Referencia interna (opcional)<input disabled={locked} value={shown?.reference ?? reference} maxLength={120} onChange={(event) => setReference(event.target.value)} /></label><label>Medio<select disabled={locked} value={shown?.paymentMethod ?? method} onChange={(event) => setMethod(event.target.value as "efectivo" | "transferencia")}><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option></select></label><label className="check-label"><input disabled={locked} type="checkbox" checked={shown?.receivedConfirmed ?? confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> Confirmo que recibí el pago</label><button className="primary-button" type="submit" disabled={busy}>{busy ? "Registrando…" : retryable ? "Reintentar venta" : "Registrar venta"}</button>{retryable && <button type="button" className="outline-button" onClick={() => void registerSale(new Event("submit") as unknown as FormEvent)}>Recuperar resultado</button>}{message && <p className="state" role="status">{message}</p>}{error && <p className="state state--error" role="alert">{error}</p>}
       </form>
     </div>
   </section>;
@@ -198,8 +220,8 @@ export default function App() {
   return <div className="site-shell">
     <header className="topbar"><a className="brand" href="#inicio" aria-label="Bubu's bakery, inicio"><span>bubu's</span><small>BAKERY</small></a><nav aria-label="Navegación principal"><a href="#catalogo">Catálogo</a><a href="#historia">Nuestra historia</a><a href="#contacto">Visítanos</a></nav><div className="topbar__actions"><button className="outline-button" onClick={() => setShowAuth(true)}>Iniciar sesión</button><a className="primary-button" href="#catalogo">Ver brownies</a></div></header>
     {showAuth && <AuthPanel onClose={() => setShowAuth(false)} onUser={setAuthUser} />}
-    {authUser?.role === "customer" && !loading && !error && <CustomerWorkspace products={products} />}
-    {authUser?.role === "operator" && !loading && !error && <OperatorWorkspace products={products} />}
+    {authUser?.role === "customer" && !loading && !error && <CustomerWorkspace key={authUser.email} products={products} userEmail={authUser.email} />}
+    {authUser?.role === "operator" && !loading && !error && <OperatorWorkspace key={authUser.email} products={products} userEmail={authUser.email} />}
     <main>
       <section className="hero" id="inicio"><div className="hero__copy"><p className="eyebrow">BROWNIES HECHOS CON CARIÑO</p><h1>Un pequeño cuadrado.<br /><em>Mucha felicidad.</em></h1><p className="hero__lead">Brownies con centro suave, bordes intensos y una razón sencilla para hacer especial cualquier día.</p><a className="primary-button" href="#catalogo">Descubre el catálogo <span>↓</span></a></div><div className="hero__visual"><BrownieArtwork variant="hero" /><span className="stamp">100%<br />brownie</span><p>Hechos para compartir</p></div></section>
       <section className="catalog-section" id="catalogo"><div className="section-heading"><div><p className="eyebrow">ELIGE TU FAVORITO</p><h2>Encuentra tu brownie.</h2></div><p className="section-note">Catálogo base en quetzales.<br />Consulta las opciones de cada caja.</p></div><div className="filters" role="group" aria-label="Filtrar catálogo"><button className={filter === "todos" ? "filter-button active" : "filter-button"} onClick={() => setFilter("todos")}>Todos</button><button className={filter === "individual" ? "filter-button active" : "filter-button"} onClick={() => setFilter("individual")}>Brownies individuales</button><button className={filter === "caja" ? "filter-button active" : "filter-button"} onClick={() => setFilter("caja")}>Cajas de 6</button></div>{loading && <p className="state" role="status">Cargando catálogo…</p>}{error && <p className="state state--error" role="alert">{error}</p>}{!loading && !error && filteredProducts.length === 0 && <p className="state">No hay productos para este filtro.</p>}<div className="product-grid">{filteredProducts.map((product) => <ProductCard key={product.slug} product={product} selected={selected === product.slug} onSelect={() => setSelected(selected === product.slug ? null : product.slug)} />)}</div></section>
