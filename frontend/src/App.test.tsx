@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
@@ -37,6 +37,13 @@ const operatorCatalog = {
   ...catalog,
   products: [...catalog.products, { ...catalog.products[0], slug: "simple-caja-6", name: "Caja de 6 Simple", composition: [{ product: "simple", quantity: 6 }], optionGroups: [] }],
 };
+
+function submitTwiceInSameTurn(form: HTMLFormElement) {
+  act(() => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+}
 
 describe("landing de catálogo", () => {
   it("muestra encabezado, precio GTQ y opciones de la caja mixta", async () => {
@@ -109,6 +116,65 @@ describe("landing de catálogo", () => {
     await userEvent.click(submit);
     expect(fetchMock).toHaveBeenCalledTimes(4);
     resolveSale?.({ id: 99 });
+  });
+
+  it("dos submits de venta en el mismo turno hacen una sola llamada", async () => {
+    let resolveSale: ((value: unknown) => void) | undefined;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: { email: "operador@ejemplo.com", name: "Operador", role: "operator", emailVerified: false } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockReturnValue(new Promise((resolve) => { resolveSale = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await screen.findByRole("heading", { name: "Registro de ventas." });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Confirmo/ }));
+    submitTwiceInSameTurn(screen.getByRole("button", { name: "Registrar venta" }).closest("form")!);
+    expect(fetchMock.mock.calls.filter(([path]) => path === "/api/operator/sales")).toHaveLength(1);
+    await act(async () => resolveSale?.({ ok: true, json: async () => ({ id: 102, paymentStatus: "RECIBIDO" }) }));
+    expect(await screen.findByText("Venta #102 registrada.")).toBeInTheDocument();
+  });
+
+  it("dos submits de solicitud en el mismo turno hacen una sola llamada", async () => {
+    let resolveOrder: ((value: unknown) => void) | undefined;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: { email: "cliente@ejemplo.com", name: "Cliente", role: "customer", emailVerified: false } }) })
+      .mockReturnValue(new Promise((resolve) => { resolveOrder = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await screen.findByRole("heading", { name: "Solicita una caja." });
+    submitTwiceInSameTurn(screen.getByRole("button", { name: "Enviar solicitud" }).closest("form")!);
+    expect(fetchMock.mock.calls.filter(([path]) => path === "/api/orders")).toHaveLength(1);
+    await act(async () => resolveOrder?.({ ok: true, json: async () => ({ id: 55 }) }));
+    expect(await screen.findByText("Solicitud #55 enviada para confirmación.")).toBeInTheDocument();
+  });
+
+  it("reintento y recuperación pulsados en el mismo turno reutilizan una sola llamada con la clave original", async () => {
+    let resolveRetry: ((value: unknown) => void) | undefined;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => operatorCatalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ user: { email: "operador@ejemplo.com", name: "Operador", role: "operator", emailVerified: false } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ orders: [] }) })
+      .mockRejectedValueOnce(new Error("La red no respondió"))
+      .mockReturnValue(new Promise((resolve) => { resolveRetry = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Iniciar sesión" }));
+    await screen.findByRole("heading", { name: "Registro de ventas." });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Confirmo/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Registrar venta" }));
+    await screen.findByRole("alert");
+    const retry = screen.getByRole("button", { name: "Reintentar venta" });
+    const recover = screen.getByRole("button", { name: "Recuperar resultado" });
+    act(() => { retry.click(); recover.click(); });
+    const saleCalls = fetchMock.mock.calls.filter(([path]) => path === "/api/operator/sales");
+    expect(saleCalls).toHaveLength(2);
+    expect(saleCalls[1][1].headers["Idempotency-Key"]).toBe(saleCalls[0][1].headers["Idempotency-Key"]);
+    await act(async () => resolveRetry?.({ ok: true, json: async () => ({ id: 103, paymentStatus: "RECIBIDO" }) }));
+    expect(await screen.findByText("Venta #103 registrada.")).toBeInTheDocument();
   });
 
   it("envía selección mixta y no muestra opciones falsas en caja homogénea", async () => {
