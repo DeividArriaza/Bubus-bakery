@@ -21,7 +21,7 @@ services:
       CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8100:8000"
     depends_on:
       db:
         condition: service_healthy

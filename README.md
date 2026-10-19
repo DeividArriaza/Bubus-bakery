@@ -33,12 +33,12 @@ Compose exige `POSTGRES_DB`, `POSTGRES_USER` y `POSTGRES_PASSWORD`; no contiene 
 URLs locales:
 
 - Landing: <http://localhost:5173>
-- Health: <http://localhost:8000/api/health>
-- Catálogo: <http://localhost:8000/api/catalog>
+- Health: <http://127.0.0.1:8100/api/health>
+- Catálogo: <http://127.0.0.1:8100/api/catalog>
 
 La base de datos no publica un puerto al host. El volumen `postgres_data` conserva la información; el seed no duplica productos al reiniciar.
 
-Los servicios se publican solo en `127.0.0.1`: frontend en `5173` y API en `8000`.
+Los servicios se publican solo en `127.0.0.1`: frontend en `5173` y API en `8100` (el contenedor escucha en `8000`; el proxy de Vite usa `http://api:8000` dentro de la red de Compose).
 
 ## Cuentas de cliente y operador
 
