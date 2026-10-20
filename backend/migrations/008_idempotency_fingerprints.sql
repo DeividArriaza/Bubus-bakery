@@ -1,0 +1,2 @@
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payload_fingerprint VARCHAR(64);
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS payload_fingerprint VARCHAR(64);

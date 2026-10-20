@@ -2,12 +2,28 @@
 
 ## 1. Estado y autoridad del documento
 
-- Versión: 0.2 — decisiones de catálogo, canales y alcance inicial sincronizadas; planificación pendiente de diseño técnico y refinamiento operativo.
+- Versión: 0.5 — stack, idioma, diseño adaptable, cuentas, solicitudes web y POS básico confirmados; pagos externos, puntos e inventario siguen fuera.
 - Este documento conserva el contexto de negocio y orienta futuras tareas delegadas. NO autoriza implementar todos los módulos ni tomar decisiones pendientes sin aprobación.
 - Los agentes deben leerlo antes de trabajar y limitarse al encargo concreto recibido.
 - Distinguir requisitos confirmados, propuestas y decisiones pendientes. Una propuesta no es una decisión aprobada.
 - Los cambios de alcance o reglas de negocio deben acordarse con el usuario y registrarse aquí antes de implementarlos.
-- No hay stack, presupuesto, cronograma ni fórmula de puntos aprobados. Las reglas de fidelización se decidirán después del cálculo de costes.
+- Stack de la primera entrega confirmado por el usuario: React + TypeScript, FastAPI, PostgreSQL y Docker Compose. No implica aprobar presupuesto, cronograma ni reglas de puntos.
+- Idioma confirmado para todo texto visible de UI y mensajes: español. La referencia Figma se adapta; su copy de muestra no se trata como hecho de negocio.
+
+## 1.1 Estado implementado verificable
+
+- [x] Rama de trabajo `feat/base-catalogo` creada sin perder documentos locales.
+- [x] Landing responsive con hero y catálogo consumiendo la API.
+- [x] API FastAPI de salud y lectura pública del catálogo.
+- [x] PostgreSQL en Compose con migración `001_initial.sql`, seed idempotente y volumen persistente.
+- [x] Productos individuales/cajas, precios en centavos GTQ y composición/opciones de caja mixta.
+- [x] Catálogo normalizado de 9 vendibles (4 individuales y 5 cajas compuestas), con componentes configurables y seed no destructivo; la fila demo legacy `mixta` queda inactiva.
+- [x] Pruebas backend y frontend, typecheck, build y recorrido visual desktop/móvil verificados; evidencia en `docs/VERIFICACION_INICIAL.md`.
+- [x] Registro/login/logout de clientes, consulta de sesión, sesiones opacas revocables, contraseñas con scrypt, cookies HttpOnly/SameSite, CORS acotado y protección Origin/CSRF.
+- [x] Solicitudes autenticadas para envío de cajas: subtotal backend, snapshot histórico de precio/composición, elección mixta exacta, idempotencia y privacidad por cliente.
+- [x] Panel operador protegido: consulta/gestión de solicitudes y ventas POS de efectivo/transferencia con actor, fecha, importes y confirmación explícita.
+- [ ] Verificación/recuperación por correo y Google: proveedor, credenciales y redirect URI pendientes; la UI no simula estas capacidades.
+- [ ] Tarjeta, cobro automático, cobertura/coste/logística de entrega, devoluciones, inventario, puntos, Wallet e integraciones sociales: no implementados.
 
 ## 2. Contexto confirmado
 
@@ -183,7 +199,7 @@ Una PWA no se considerará cumplimiento de la app sin aprobación explícita. Ev
 
 **Wallet — alcance solicitado en ideación, fases pendientes:** evaluar tarjetas de fidelización para Google Wallet y Apple Wallet. La tarjeta puede usar identificador opaco/QR, saldo sincronizado y acceso al sitio, pero no es fuente de verdad ni permiso administrativo. No insertar credenciales o tokens duraderos en el QR; saldo de Wallet no sustituye la validación del backend. Revisar cuentas de emisor, certificados, elegibilidad, distribución y requisitos de login para iOS.
 
-## 6. Arquitectura conceptual — propuesta, sin stack elegido
+## 6. Arquitectura conceptual — stack inicial confirmado, detalles futuros pendientes
 
 - Landing pública.
 - Interfaz de clientes para cuentas, pedidos y fidelización, web y app según alcance aprobado.
@@ -191,6 +207,7 @@ Una PWA no se considerará cumplimiento de la app sin aprobación explícita. Ev
 - Backend compartido con autenticación, permisos y reglas de negocio.
 - Persistencia transaccional para ventas y movimientos de puntos.
 - Web y app acceden al backend/API; no se conectan directamente a la base de datos.
+- Stack confirmado para esta base: React + TypeScript, FastAPI, PostgreSQL y Docker Compose.
 - Base de datos en red privada; credenciales y reglas de precios, pedidos, permisos y puntos residen en el backend.
 - **Requisito confirmado:** contenerizar por separado, al menos, frontend web, backend y base de datos; esto no exige microservicios ni selecciona proveedor cloud.
 
@@ -359,3 +376,7 @@ Priorizar estas preguntas antes de seleccionar tecnologías o activar fidelizaci
 [1] [Google Wallet — Loyalty cards](https://developers.google.com/wallet/retail/loyalty-cards)
 [2] [Apple Wallet](https://developer.apple.com/wallet)
 [3] [Google Identity Services — Overview](https://developers.google.com/identity/gsi/web/guides/overview)
+
+## Estado vigente de la entrega publicada
+
+La entrega publicada en `feat/base-catalogo` está pausada con estado **NO_APROBADO_PARA_VENTAS_REALES** y alcance `development-demo`, tras la revisión final externa de `5265f6b`. Se alcanzó el límite operativo de dos ciclos adoptado para esta revisión; se pausa a la espera de acordar el siguiente ciclo. Los resultados históricos no se borran ni se reinterpretan como aprobación. Los hallazgos y pruebas pendientes están documentados en [`docs/ESTADO_PENDIENTE.md`](ESTADO_PENDIENTE.md); no iniciar otro ciclo sin una autorización nueva.

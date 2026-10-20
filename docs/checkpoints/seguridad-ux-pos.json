@@ -1,0 +1,11 @@
+{
+  "stage": "seguridad-ux-pos",
+  "complete": true,
+  "tests_passed": true,
+  "branch": "feat/base-catalogo",
+  "red": "frontend 2 failed por UUID variable; auth 2 failed por rate limit/password max ausentes",
+  "green": "backend 23 passed/4 skipped; PostgreSQL 3 passed; frontend 10 passed; typecheck/build; pip-audit/npm audit 0; browser desktop/mobile; Compose 3 healthy",
+  "browser": "cliente->operador detalle->POS mixta Simple y doble clic, fixtures propios eliminados",
+  "limits": "limiter por proceso; Google/email/puntos/Wallet/tarjeta/cobertura y total final continúan diferidos",
+  "acceptance": "pendiente del ciclo padre"
+}

@@ -1,0 +1,15 @@
+{
+  "stage": "revision-ciclo-dos",
+  "complete": true,
+  "tests_passed": true,
+  "branch": "feat/base-catalogo",
+  "base_commit": "f9dd0241d840ef2e44f46dcc03e6e935e9de45bc",
+  "red": "3 backend failures reales: body chunked 400 y replay histórico 422; frontend operación incierta dejó cantidad editable",
+  "green": "backend 26 passed/5 skipped; PostgreSQL aislado 4 passed; frontend 11 passed; typecheck/build correctos",
+  "audits": "npm audit high 0; pip-audit lock 0 en contenedor efímero readonly",
+  "compose": "db/api/frontend healthy; API 127.0.0.1:8000; frontend 127.0.0.1:5173; DB sin puerto host",
+  "browser": "Playwright desktop/móvil landing, consola sin errores; capturas ux-ciclo-dos-1440 y ux-ciclo-dos-390",
+  "migration": "009_idempotency_intentions.sql aplicada sin borrar volumen",
+  "limits": "sin puntos, Wallet, Google configurado, email, tarjeta, cobertura ni claim de producción",
+  "acceptance": "pendiente del padre; este checkpoint no afirma aprobación externa"
+}

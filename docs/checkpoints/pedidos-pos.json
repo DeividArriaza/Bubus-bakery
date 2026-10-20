@@ -1,0 +1,18 @@
+{
+  "stage": "pedidos-pos",
+  "complete": true,
+  "tests_passed": true,
+  "branch": "feat/base-catalogo",
+  "detail": {
+    "backend": "14 passed, 1 skipped, 1 warning; tests de precio backend, snapshot, composición, idempotencia, privacidad y rol",
+    "frontend": "5 passed; typecheck correcto; build correcto",
+    "audit": "npm audit moderate: 0 vulnerabilities; pip-audit unavailable; pip check limpio",
+    "compose": "build/up correcto; db/api/frontend healthy; migrations 001-006; catálogo 9 y órdenes/ventas fixture 0",
+    "request_flow": "browser real cliente creó solicitud, operador consultó/confirmó, venta registrada y reintento no duplicó",
+    "pricing": "precio adulterado ignorado; subtotal desde catálogo; snapshots históricos de producto/composición/opciones",
+    "rules": "envio solo caja6; mezcla exige elección exacta; subtotal congelado; shipping y total final null; estados de pedido/pago/entrega separados",
+    "pos": "efectivo/transferencia únicamente; actor, fecha, importes, referencia opcional y confirmación explícita; sin devolución automática",
+    "browser": "Playwright móvil/desktop sin requests fallidas ni errores no esperados; capturas orders-mobile y pos-desktop",
+    "limits": "sin tarjetas, puntos, Wallet, inventario, reparto, banco, cobertura/coste confirmados; fixtures smoke limpiados sin borrar cuentas ajenas"
+  }
+}

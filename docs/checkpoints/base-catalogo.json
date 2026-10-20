@@ -1,0 +1,16 @@
+{
+  "stage": "base-catalogo",
+  "complete": true,
+  "tests_passed": true,
+  "branch": "feat/base-catalogo",
+  "detail": {
+    "backend": "docker compose exec -T api pytest -q: 4 passed, 1 skipped, 1 warning",
+    "compose_test": "test_compose_config.py actualizado montado explícitamente: 1 passed",
+    "frontend": "npm run test:run: 3 passed; npm run typecheck: correcto; npm run build: correcto",
+    "audit": "npm audit moderate: 0 vulnerabilities; pip-audit unavailable; pip check limpio",
+    "compose": "config requerido validado; db/api/frontend healthy; API 127.0.0.1:8000; frontend 127.0.0.1:5173; DB privada",
+    "catalog": "9 activos: 4 individuales y 5 cajas; persistencia de precio/nombre/componente verificada tras reinicio",
+    "browser": "Playwright desktop/móvil; filtro cajas, opción mixta, consola y network verificados sin errores",
+    "tdd": "RED real de correcciones: backend 3 failed/2 passed y frontend 2 failed/1 passed; entorno histórico separado"
+  }
+}
